@@ -10,7 +10,10 @@ enum AnalyticsService {
 
     /// Initializes Mixpanel with the project token injected at build time.
     static func configure() {
-        let token = Config.EXPO_PUBLIC_MIXPANEL_TOKEN.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Looked up by name so the app compiles even before the env var is
+        // registered; an empty value simply leaves tracking disabled.
+        let token = (Config.allValues["EXPO_PUBLIC_MIXPANEL_TOKEN"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else {
             print("[Analytics] No Mixpanel token — tracking disabled")
             return
