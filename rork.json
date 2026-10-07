@@ -1,0 +1,19 @@
+{
+  "$schema": "https://rork.com/schema/rork.json",
+  "apps": [
+    {
+      "name": "Pushcraft",
+      "path": "ios-push-up-smash",
+      "framework": "swift",
+      "settings": {
+        "displayName": "Pushcraft",
+        "iosBundleId": "com.tinochiwara.pushcraft"
+      }
+    },
+    {
+      "name": "Backend",
+      "path": "backend",
+      "framework": "supabase"
+    }
+  ]
+}
