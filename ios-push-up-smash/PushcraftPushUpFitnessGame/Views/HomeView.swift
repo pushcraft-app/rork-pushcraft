@@ -9,6 +9,7 @@ struct HomeView: View {
 
     @State private var showWorkoutPrep = false
     @State private var showJourney = false
+    @Namespace private var trailZoom
     @State private var headerHeight: CGFloat = 96
     /// Live scroll offset (0 at rest) driving the tower's parallax drift.
     @State private var scrollOffset: CGFloat = 0
@@ -60,7 +61,8 @@ struct HomeView: View {
             WorkoutPrepView()
         }
         .navigationDestination(isPresented: $showJourney) {
-            JourneyView(data: data)
+            TowerTrailView()
+                .navigationTransition(.zoom(sourceID: "tower-trail", in: trailZoom))
         }
     }
 
@@ -327,10 +329,6 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity)
         .buttonStyle(PressScaleStyle())
+        .matchedTransitionSource(id: "tower-trail", in: trailZoom)
     }
-}
-
-#Preview {
-    NavigationStack { HomeView(data: .mock) }
-        .environment(AppState())
 }
