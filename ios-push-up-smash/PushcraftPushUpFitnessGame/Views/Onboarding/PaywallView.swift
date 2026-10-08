@@ -105,7 +105,7 @@ struct PaywallView: View {
         VStack(spacing: 2) {
             Text("Get Stronger with")
                 .foregroundStyle(.white)
-            Text("Pushcraft")
+            Text("PushcraftPushUpFitnessGame")
                 .foregroundStyle(Theme.paywallGold)
         }
         .font(.system(size: 36, weight: .heavy, design: .rounded))
@@ -312,7 +312,7 @@ struct PaywallView: View {
             AnalyticsService.trackPurchaseCancelled(plan: planName)
         case .pending:
             AnalyticsService.trackPurchasePending(plan: planName)
-            alert = PaywallAlert(title: "Purchase pending", message: "Your purchase is waiting for approval. Pushcraft unlocks as soon as it goes through.")
+            alert = PaywallAlert(title: "Purchase pending", message: "Your purchase is waiting for approval. PushcraftPushUpFitnessGame unlocks as soon as it goes through.")
         case .failed(let message):
             HapticService.ui.warning()
             AnalyticsService.trackPurchaseFailed(plan: planName)
@@ -326,7 +326,7 @@ struct PaywallView: View {
             HapticService.ui.success()
             AnalyticsService.trackPurchaseRestored()
         case .nothingFound:
-            alert = PaywallAlert(title: "Nothing to restore", message: "We couldn't find an active Pushcraft subscription for this Apple ID.")
+            alert = PaywallAlert(title: "Nothing to restore", message: "We couldn't find an active PushcraftPushUpFitnessGame subscription for this Apple ID.")
         case .failed(let message):
             alert = PaywallAlert(title: "Restore failed", message: message)
         }

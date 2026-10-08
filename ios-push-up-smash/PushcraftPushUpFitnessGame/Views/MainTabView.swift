@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pushcraft's main navigation: Home, Towers, Battles, Profile.
+/// PushcraftPushUpFitnessGame's main navigation: Home, Towers, Battles, Profile.
 /// Each tab uses custom selected/unselected artwork that swaps with the
 /// selection state. On iOS 26 the system tab bar renders as Liquid Glass.
 struct MainTabView: View {
