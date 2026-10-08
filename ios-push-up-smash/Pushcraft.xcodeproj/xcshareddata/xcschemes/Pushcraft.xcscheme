@@ -14,9 +14,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-               BuildableName = "PushcraftPushUpFitnessGame.app"
-               BlueprintName = "PushcraftPushUpFitnessGame"
-               ReferencedContainer = "container:PushcraftPushUpFitnessGame.xcodeproj">
+               BuildableName = "Pushcraft.app"
+               BlueprintName = "Pushcraft"
+               ReferencedContainer = "container:Pushcraft.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -36,9 +36,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-            BuildableName = "PushcraftPushUpFitnessGame.app"
-            BlueprintName = "PushcraftPushUpFitnessGame"
-            ReferencedContainer = "container:PushcraftPushUpFitnessGame.xcodeproj">
+            BuildableName = "Pushcraft.app"
+            BlueprintName = "Pushcraft"
+            ReferencedContainer = "container:Pushcraft.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -53,9 +53,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "105FC5792E9EAD3100EA8BCF"
-            BuildableName = "PushcraftPushUpFitnessGame.app"
-            BlueprintName = "PushcraftPushUpFitnessGame"
-            ReferencedContainer = "container:PushcraftPushUpFitnessGame.xcodeproj">
+            BuildableName = "Pushcraft.app"
+            BlueprintName = "Pushcraft"
+            ReferencedContainer = "container:Pushcraft.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

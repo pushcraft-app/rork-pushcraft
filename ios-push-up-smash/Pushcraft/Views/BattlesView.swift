@@ -535,7 +535,7 @@ struct BattlesView: View {
     }
 
     private func share(_ battle: Battle) {
-        shareItem = ShareItem(message: "Challenge me on PushcraftPushUpFitnessGame — \(battle.exercise.challengeTitle)! Enter my battle code: \(battle.code).")
+        shareItem = ShareItem(message: "Challenge me on Pushcraft — \(battle.exercise.challengeTitle)! Enter my battle code: \(battle.code).")
     }
 
     private func copyCode(_ code: String) {

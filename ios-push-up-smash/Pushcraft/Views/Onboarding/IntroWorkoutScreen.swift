@@ -191,7 +191,7 @@ struct IntroWorkoutScreen: View {
     private var cameraMessage: (String, String, Bool)? {
         switch engine.cameraStatus {
         case .denied:
-            ("Camera access needed", "PushcraftPushUpFitnessGame counts your push-ups with the camera. Video never leaves your phone.", true)
+            ("Camera access needed", "Pushcraft counts your push-ups with the camera. Video never leaves your phone.", true)
         case .noCamera:
             ("No camera found", "This device doesn't have a camera available right now.", false)
         case .failed:

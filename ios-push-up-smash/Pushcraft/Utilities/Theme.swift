@@ -4,7 +4,7 @@ enum Theme {
     static let cyan = Color(hex: 0x27E3FF)
     static let gold = Color(hex: 0xFFC53D)
 
-    // PushcraftPushUpFitnessGame palette
+    // Pushcraft palette
     static let ivory = Color(hex: 0xF5F1E6)
     static let amber = Color(hex: 0xFFAE2A)
     static let amberSoft = Color(hex: 0xFFC24B)

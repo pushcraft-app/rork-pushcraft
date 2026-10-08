@@ -1,6 +1,6 @@
 //
-//  PushcraftPushUpFitnessGameApp.swift
-//  PushcraftPushUpFitnessGame
+//  PushcraftApp.swift
+//  Pushcraft
 //
 //  Created by Rork on September 30, 2026.
 //
@@ -10,7 +10,7 @@ import Supabase
 import SwiftUI
 
 @main
-struct PushcraftPushUpFitnessGameApp: App {
+struct PushcraftApp: App {
     @State private var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
 
