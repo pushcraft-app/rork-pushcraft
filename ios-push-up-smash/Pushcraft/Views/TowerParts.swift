@@ -110,3 +110,21 @@ struct TowerOutlineShape: Shape {
         return path
     }
 }
+
+/// Faint filled silhouette of the finished tower with a subtle edge, drawn
+/// behind the parts already built so the final shape stays visible while a
+/// tower is still growing.
+struct TowerSilhouetteLayer: View {
+    let key: String
+    var intensity: Double = 1
+
+    var body: some View {
+        TowerOutlineShape(contours: TowerParts.entry(for: key)?.silhouette ?? [])
+            .fill(Color(hex: 0x081120).opacity(0.55 * intensity))
+            .overlay {
+                TowerOutlineShape(contours: TowerParts.entry(for: key)?.silhouette ?? [])
+                    .stroke(Theme.ivory.opacity(0.25 * intensity), lineWidth: 1)
+            }
+            .allowsHitTesting(false)
+    }
+}

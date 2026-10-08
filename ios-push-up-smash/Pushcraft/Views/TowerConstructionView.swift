@@ -26,7 +26,8 @@ enum TowerArt {
 /// A tower assembled from its nine cut-out stage parts.
 /// - Built stages render in full color.
 /// - The stage being built shows its dashed outline and fades in with every rep.
-/// - Later stages are invisible.
+/// - Later stages are invisible, but the finished tower's silhouette stays
+///   faintly visible behind everything that is built so far.
 /// - A brand-new or locked tower shows the whole tower as a dashed silhouette.
 struct TowerConstructionView: View {
     let towerID: String?
@@ -57,6 +58,10 @@ struct TowerConstructionView: View {
                     TowerOutlineLayer(key: key, kind: .silhouette, intensity: isLocked ? 0.45 : 1)
                         .transition(.opacity)
                 } else {
+                    if currentStage != nil {
+                        TowerSilhouetteLayer(key: key)
+                            .transition(.opacity)
+                    }
                     ForEach(0..<built, id: \.self) { index in
                         TowerPartLayer(key: key, stage: index + 1)
                     }

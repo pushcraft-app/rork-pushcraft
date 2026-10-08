@@ -3,10 +3,13 @@ import SwiftUI
 /// A single tower card in the horizontal carousel: status badge, tower
 /// artwork, name, level info and progress. The gold styling of the current
 /// tower is tied to its status, independent of which card is centered.
+/// Tapping a locked card fires `onLockedTap`; any unlocked card opens its
+/// journey via `onOpen`.
 struct TowerCardView: View {
     let tower: Tower
     let isCentered: Bool
     let onLockedTap: () -> Void
+    let onOpen: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,8 +63,11 @@ struct TowerCardView: View {
         .shadow(color: tower.status == .inProgress ? Theme.amber.opacity(0.28) : .clear, radius: 18)
         .contentShape(.rect(cornerRadius: 24, style: .continuous))
         .onTapGesture {
-            guard tower.status == .locked else { return }
             HapticService.ui.tap()
+            guard tower.status == .locked else {
+                onOpen()
+                return
+            }
             onLockedTap()
         }
     }
@@ -138,7 +144,7 @@ struct TowerCardView: View {
 }
 
 #Preview {
-    TowerCardView(tower: Tower.samples[1], isCentered: true, onLockedTap: {})
+    TowerCardView(tower: Tower.samples[1], isCentered: true, onLockedTap: {}, onOpen: {})
         .frame(width: 250, height: 430)
         .background(Color(hex: 0x0B1426))
 }

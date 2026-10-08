@@ -87,16 +87,30 @@ final class ProgressStore {
             d.progress.contains { $0.towerId == tower.id && $0.status == "completed" }
         }
         let tower = towersByOrder.first { $0.id == active?.towerId } ?? lastCompleted ?? towersByOrder.first
-        let stages = d.stages.filter { $0.towerId == tower?.id }.sorted { $0.stageNumber < $1.stageNumber }
-        let isAllComplete = active == nil && lastCompleted != nil
+        guard let tower else { return .placeholder }
+        return homeData(towerID: tower.id)
+    }
 
-        let currentStage = active?.currentStage ?? stages.count
-        let stageTarget = active?.stageTarget ?? stages.last?.repsRequired ?? 0
-        let repsIntoStage = active?.repsIntoStage ?? stageTarget
+    /// Screen data for one specific tower, so the Towers page can open any
+    /// unlocked tower's journey by tapping its card.
+    func homeData(towerID: String) -> HomeData {
+        guard let d = dashboard else { return .placeholder }
+
+        let towersByOrder = d.towers.sorted { $0.sortOrder < $1.sortOrder }
+        let tower = towersByOrder.first { $0.id == towerID }
+        let stages = d.stages.filter { $0.towerId == towerID }.sorted { $0.stageNumber < $1.stageNumber }
+        let row = d.progress.first { $0.towerId == towerID }
+        let isComplete = row?.status == "completed"
+
+        let currentStage = isComplete ? stages.count : (row?.currentStage ?? 1)
+        let stageTarget = isComplete
+            ? stages.last?.repsRequired ?? 0
+            : row?.stageTarget ?? stages.last?.repsRequired ?? 0
+        let repsIntoStage = isComplete ? stageTarget : (row?.repsIntoStage ?? 0)
         let stageName = stages.first { $0.stageNumber == currentStage }?.name ?? ""
 
         let journey = stages.map { stage -> JourneyStage in
-            if isAllComplete || stage.stageNumber < currentStage {
+            if isComplete || stage.stageNumber < currentStage {
                 return JourneyStage(number: stage.stageNumber, name: stage.name, state: .completed, repsRequired: stage.repsRequired, repsDone: stage.repsRequired)
             }
             if stage.stageNumber == currentStage {
@@ -122,7 +136,7 @@ final class ProgressStore {
             xpPerWorkout: d.rules.xpPerCompleted,
             rewardName: "Stone",
             journey: journey,
-            isAllComplete: isAllComplete
+            isAllComplete: isComplete
         )
     }
 

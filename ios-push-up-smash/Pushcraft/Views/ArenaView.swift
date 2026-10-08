@@ -14,6 +14,9 @@ struct ArenaView: View {
     @State private var hasEnded = false
     @State private var confirmEnd = false
     @State private var showProgressTip = false
+    @State private var countdownRemaining: Int?
+    @State private var showGo = false
+    @State private var sound = SoundService()
     @Environment(\.scenePhase) private var scenePhase
 
     init(session: ActiveSession, workouts: WorkoutService, onEnd: @escaping (Int, Int, WorkoutEndReason) -> Void) {
@@ -58,6 +61,11 @@ struct ArenaView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            if countdownRemaining != nil || showGo {
+                StartCountdownOverlay(count: countdownRemaining, isGo: showGo)
+                    .allowsHitTesting(false)
+            }
+
             if let message = cameraMessage {
                 CameraMessageView(message: message)
             }
@@ -70,6 +78,10 @@ struct ArenaView: View {
                 guard let engine else { return }
                 workouts.checkpoint(id: session.id, reps: engine.reps, blocks: engine.smashCount)
             }
+            // Regular workouts wait for the countdown; battles score right
+            // away because their clock is already running from the registered
+            // start. The camera and calibration still run either way.
+            engine.isAcceptingReps = session.isBattle
             engine.start()
             showFirstSessionTipIfNeeded()
         }
@@ -88,6 +100,7 @@ struct ArenaView: View {
         }
         .task { await heartbeat() }
         .task { await runBattleTimer() }
+        .task { await runCountdown() }
         .onChange(of: isComplete) { _, complete in
             if complete && !session.isBattle {
                 HapticService().smash()
@@ -104,6 +117,31 @@ struct ArenaView: View {
     }
 
     // MARK: - Timing
+
+    /// 5-4-3-2-1 get-ready countdown before a regular workout starts counting.
+    /// Battles skip it (their 60-second clock is server-side and already
+    /// running), and an early exit cancels it.
+    private func runCountdown() async {
+        guard !session.isBattle else { return }
+        try? await Task.sleep(for: .seconds(0.6))
+        for tick in stride(from: 5, through: 1, by: -1) {
+            guard !hasEnded else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                countdownRemaining = tick
+            }
+            sound.play(.drop, pitch: 1.5, volume: 0.8)
+            HapticService.ui.tick()
+            try? await Task.sleep(for: .seconds(1))
+        }
+        guard !hasEnded else { return }
+        countdownRemaining = nil
+        engine.isAcceptingReps = true
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { showGo = true }
+        sound.play(.hit, pitch: 1.25, volume: 1)
+        HapticService.ui.success()
+        try? await Task.sleep(for: .seconds(0.8))
+        withAnimation(.easeOut(duration: 0.3)) { showGo = false }
+    }
 
     private func heartbeat() async {
         while !Task.isCancelled && !hasEnded {
@@ -514,5 +552,46 @@ private struct CameraMessageView: View {
                 .strokeBorder(Theme.cyan.opacity(0.6), lineWidth: 1.5)
         }
         .padding(.horizontal, 28)
+    }
+}
+
+/// Big 5-4-3-2-1 get-ready overlay shown before reps start counting.
+private struct StartCountdownOverlay: View {
+    let count: Int?
+    let isGo: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.42)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                if isGo {
+                    Text("GO!")
+                        .font(.system(size: 96, weight: .black, design: .rounded))
+                        .foregroundStyle(
+                            LinearGradient(colors: [.white, Theme.progressCyan], startPoint: .top, endPoint: .bottom)
+                        )
+                        .shadow(color: Theme.progressCyan.opacity(0.8), radius: 18)
+                } else if let count {
+                    Text("\(count)")
+                        .font(.system(size: 110, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.6), radius: 12)
+                        .id(count)
+                        .transition(.scale(scale: 1.7).combined(with: .opacity))
+                }
+
+                if !isGo {
+                    Text("GET INTO POSITION")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .tracking(2)
+                        .foregroundStyle(.white.opacity(0.9))
+                        .shadow(color: .black.opacity(0.6), radius: 4)
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: count)
+        }
     }
 }

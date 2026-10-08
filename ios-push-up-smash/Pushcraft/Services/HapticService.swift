@@ -92,4 +92,22 @@ final class HapticService {
         guard isEnabled else { return }
         rigid.impactOccurred(intensity: 0.8)
     }
+
+    /// Heavy stone impact when a tower part drops into place.
+    func stoneLand() {
+        guard isEnabled else { return }
+        rigid.impactOccurred(intensity: 1)
+        heavy.impactOccurred(intensity: 0.85)
+    }
+
+    /// Long double-impact finale for a fully built tower.
+    func finale() {
+        guard isEnabled else { return }
+        heavy.impactOccurred(intensity: 1)
+        notification.notificationOccurred(.success)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.18))
+            heavy.impactOccurred(intensity: 1)
+        }
+    }
 }

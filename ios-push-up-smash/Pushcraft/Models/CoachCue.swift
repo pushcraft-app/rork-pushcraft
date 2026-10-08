@@ -3,6 +3,7 @@ import SwiftUI
 /// The single instruction shown under the depth meter.
 enum CoachCue: Hashable {
     case getInFrame
+    case getInPosition
     case holdTop
     case goDown
     case smashIt
@@ -15,6 +16,7 @@ enum CoachCue: Hashable {
     func title(for exercise: Exercise) -> String {
         switch self {
         case .getInFrame: "GET IN FRAME"
+        case .getInPosition: "GET INTO POSITION"
         case .holdTop: "HOLD THE START"
         case .goDown: exercise == .sitUps ? "SIT UP TO CHARGE" : "GO DOWN TO CHARGE"
         case .smashIt: exercise == .sitUps ? "SIT UP — SMASH IT!" : "PUSH UP — SMASH IT!"
@@ -28,6 +30,10 @@ enum CoachCue: Hashable {
             exercise == .sitUps
                 ? "Prop your phone up to the side, then lie on your back"
                 : "Prop your phone up facing you, then get into a plank"
+        case .getInPosition:
+            exercise == .sitUps
+                ? "Lie on your back, side-on to the camera"
+                : "Lie down into a plank to start"
         case .holdTop:
             exercise == .sitUps
                 ? "Lie flat, stay still — calibrating"
@@ -39,7 +45,7 @@ enum CoachCue: Hashable {
 
     var tint: Color {
         switch self {
-        case .getInFrame, .goDown: Theme.cyan
+        case .getInFrame, .getInPosition, .goDown: Theme.cyan
         case .holdTop: .white
         case .smashIt, .smashed: Theme.gold
         }
@@ -50,7 +56,7 @@ enum CoachCue: Hashable {
         case .getInFrame: "person.fill.viewfinder"
         case .holdTop: "hand.raised.fill"
         case .smashed: "sparkles"
-        case .goDown, .smashIt: nil
+        case .getInPosition, .goDown, .smashIt: nil
         }
     }
 }

@@ -1,6 +1,8 @@
 import AVFoundation
 
 /// Low-latency SFX with per-play pitch via AVAudioEngine + varispeed.
+/// Every voice passes through a gain stage so effects play well past the
+/// 1.0 player-volume ceiling.
 final class SoundService {
     enum Effect: String, CaseIterable {
         case hit = "punch_impact_crack"
@@ -11,9 +13,13 @@ final class SoundService {
         var voiceCount: Int { self == .hit ? 3 : 2 }
     }
 
+    /// Master loudness lift (dB) applied to every effect.
+    private static let boostDB: Float = 5
+
     private struct Voice {
         let player: AVAudioPlayerNode
         let varispeed: AVAudioUnitVarispeed
+        let gain: AVAudioUnitEQ
     }
 
     private let engine = AVAudioEngine()
@@ -34,11 +40,20 @@ final class SoundService {
             buffers[effect] = buffer
             var pool: [Voice] = []
             for _ in 0..<effect.voiceCount {
-                let voice = Voice(player: AVAudioPlayerNode(), varispeed: AVAudioUnitVarispeed())
+                // A wide, near-flat parametric band that only adds the master
+                // boost — player.volume caps at 1.0, this lifts past it.
+                let gain = AVAudioUnitEQ(numberOfBands: 1)
+                gain.bands[0].filterType = .parametric
+                gain.bands[0].frequency = 1000
+                gain.bands[0].bandwidth = 100
+                gain.globalGain = Self.boostDB
+                let voice = Voice(player: AVAudioPlayerNode(), varispeed: AVAudioUnitVarispeed(), gain: gain)
                 engine.attach(voice.player)
                 engine.attach(voice.varispeed)
+                engine.attach(gain)
                 engine.connect(voice.player, to: voice.varispeed, format: buffer.format)
-                engine.connect(voice.varispeed, to: engine.mainMixerNode, format: buffer.format)
+                engine.connect(voice.varispeed, to: gain, format: buffer.format)
+                engine.connect(gain, to: engine.mainMixerNode, format: buffer.format)
                 pool.append(voice)
             }
             voices[effect] = pool

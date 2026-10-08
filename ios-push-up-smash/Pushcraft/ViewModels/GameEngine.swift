@@ -208,6 +208,7 @@ final class GameEngine {
         } else {
             switch tracking.phase {
             case .searching: next = .getInFrame
+            case .wrongPosition: next = .getInPosition
             case .calibrating: next = .holdTop
             case .top, .charging: next = .goDown
             case .charged: next = .smashIt
@@ -234,7 +235,7 @@ final class GameEngine {
         let frame = layout.blockFrame
         let impact = CGPoint(x: frame.midX, y: frame.maxY)
 
-        sound.play(.hit, pitch: Float(1.12 - 0.28 * power), volume: Float(0.8 + 0.2 * power))
+        sound.play(.hit, pitch: Float(1.12 - 0.28 * power), volume: Float(0.95 + 0.05 * power))
         haptics.hit(power: power)
 
         rings.append(ShockRing(id: nextID(), start: now, origin: impact, power: power, color: spec.tier.accent, isBig: false))
@@ -288,7 +289,7 @@ final class GameEngine {
             }
         }
         after(0.42, gen: gen) { [weak self] in
-            self?.sound.play(.coins, pitch: 1, volume: 0.9)
+            self?.sound.play(.coins, pitch: 1, volume: 1)
         }
         after(1.25, gen: gen) { [weak self] in
             self?.payout = nil
@@ -312,7 +313,7 @@ final class GameEngine {
         blockID += 1
         blockSeed = UInt64.random(in: 1...UInt64.max)
         blockPhase = .dropping
-        sound.play(.drop, pitch: level >= BlockTier.alloy.rawValue ? 0.85 : 1, volume: 0.9)
+        sound.play(.drop, pitch: level >= BlockTier.alloy.rawValue ? 0.85 : 1, volume: 1)
         land(after: 0.38)
     }
 

@@ -161,11 +161,8 @@ struct HomeView: View {
                     .padding(.top, 12)
             }
 
-            UpNextCard(data: data)
-                .padding(.top, 12)
-
             startButton
-                .padding(.top, 16)
+                .padding(.top, 12)
 
             journeyLink
                 .padding(.top, 12)

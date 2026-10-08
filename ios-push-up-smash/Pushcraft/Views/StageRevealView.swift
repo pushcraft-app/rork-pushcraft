@@ -2,8 +2,9 @@ import SwiftUI
 
 /// Full-screen celebration after a workout that completes one or more
 /// construction stages: each finished part drops into place with a bounce,
-/// a puff of stone dust and a thud, a golden shimmer sweeps over it, sparkles
-/// keep twinkling, and the next stage's dashed outline fades in.
+/// a puff of stone dust and a stone thump (sound + haptics), a golden shimmer
+/// sweeps over it, sparkles keep twinkling, and the next stage's dashed outline
+/// fades in. Finishing a whole tower adds a bigger boom and finale.
 struct StageRevealView: View {
     let towerID: String?
     let towerName: String
@@ -23,6 +24,7 @@ struct StageRevealView: View {
     @State private var showNextOutline = false
     @State private var burstDate: Date?
     @State private var sparkles: [Sparkle] = []
+    @State private var sound = SoundService()
 
     private let key: String?
     private let towerHeight: CGFloat = 380
@@ -264,8 +266,10 @@ struct StageRevealView: View {
             }
             Task {
                 try? await Task.sleep(for: .seconds(0.2))
-                HapticService.ui.thud()
-                HapticService.ui.land()
+                // Stone thump synced with the dust and shake; each successive
+                // part lands a touch deeper so the build feels weightier.
+                sound.play(.drop, pitch: Float(max(0.82 - 0.04 * Double(index), 0.68)), volume: 1)
+                HapticService.ui.stoneLand()
                 landedStages.insert(stage)
             }
         }
@@ -273,6 +277,13 @@ struct StageRevealView: View {
         try? await Task.sleep(for: .seconds(0.22))
         burstDate = Date()
         HapticService.ui.success()
+        sound.play(.coins, pitch: 1, volume: 1)
+        if nextStageName == nil {
+            // The whole tower just finished: a bigger boom and a long
+            // double-impact finale.
+            sound.play(.shatter, pitch: 0.85, volume: 1)
+            HapticService.ui.finale()
+        }
 
         try? await Task.sleep(for: .seconds(0.3))
         withAnimation(.easeInOut(duration: 1.0)) {

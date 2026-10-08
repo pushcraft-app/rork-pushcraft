@@ -8,6 +8,8 @@ struct TowersView: View {
     @State private var showUnlockAlert = false
     @State private var unlockMessage = ""
     @State private var showWorkoutPrep = false
+    @State private var showJourney = false
+    @State private var journeyTowerID: String?
 
     private var towers: [Tower] { appState.progress.towers }
     private var home: HomeData { appState.progress.homeData }
@@ -32,9 +34,6 @@ struct TowersView: View {
                     divider
                         .padding(.top, 26)
 
-                    milestoneSection
-                        .padding(.top, 22)
-
                     continueButton
                         .padding(.top, 20)
                 }
@@ -47,6 +46,11 @@ struct TowersView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(isPresented: $showWorkoutPrep) {
             WorkoutPrepView()
+        }
+        .navigationDestination(isPresented: $showJourney) {
+            if let journeyTowerID {
+                JourneyView(data: appState.progress.homeData(towerID: journeyTowerID))
+            }
         }
         .alert("Tower locked", isPresented: $showUnlockAlert) {
             Button("OK", role: .cancel) {}
@@ -94,7 +98,11 @@ struct TowersView: View {
                     TowerCardView(
                         tower: tower,
                         isCentered: centeredTowerID == tower.id,
-                        onLockedTap: { showLockedMessage(for: tower) }
+                        onLockedTap: { showLockedMessage(for: tower) },
+                        onOpen: {
+                            journeyTowerID = tower.id
+                            showJourney = true
+                        }
                     )
                     .frame(width: cardWidth)
                     .scaleEffect(centeredTowerID == tower.id ? 1 : 0.9)
@@ -122,33 +130,12 @@ struct TowersView: View {
         showUnlockAlert = true
     }
 
-    // MARK: - Milestone
-
     private var divider: some View {
         Rectangle()
             .fill(.white.opacity(0.1))
             .frame(height: 1)
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 20)
-    }
-
-    private var milestoneSection: some View {
-        VStack(spacing: 6) {
-            Text("Your next milestone")
-                .font(.system(size: 21, weight: .bold, design: .rounded))
-                .foregroundStyle(Theme.ivory)
-            Text(milestoneText)
-                .multilineTextAlignment(.center)
-                .font(.system(size: 16, weight: .medium, design: .rounded))
-                .foregroundStyle(Theme.mist)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 20)
-    }
-
-    private var milestoneText: String {
-        if home.isAllComplete { return "Every tower is built. Your reps still count toward your stats." }
-        return "\(home.repsToGo) reps to finish Stage \(home.stageNumber) · \(home.stageName)."
     }
 
     // MARK: - Continue building
