@@ -10,6 +10,8 @@ struct HomeView: View {
     @State private var showWorkoutPrep = false
     @State private var showJourney = false
     @State private var headerHeight: CGFloat = 96
+    /// Live scroll offset (0 at rest) driving the tower's parallax drift.
+    @State private var scrollOffset: CGFloat = 0
 
     private let topInset: CGFloat = 8
     private let pillGap: CGFloat = 14
@@ -40,7 +42,13 @@ struct HomeView: View {
                 }
                 .padding(.top, topInset)
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .scrollBounceBehavior(.always)
+            // Parallax source: the tower drifts at a fraction of this offset.
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y + geometry.contentInsets.top
+            } action: { _, newValue in
+                scrollOffset = newValue
+            }
             .refreshable { await appState.refresh() }
         }
         .background {
@@ -141,6 +149,9 @@ struct HomeView: View {
         }
         .padding(.top, topInset + headerHeight + pillGap)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Parallax: the tower pans at a fraction of the scroll speed, so
+        // pulling the page up/down also shifts the tower into better view.
+        .offset(y: -scrollOffset * 0.35)
         .allowsHitTesting(false)
     }
 

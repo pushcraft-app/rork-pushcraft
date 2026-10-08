@@ -5,9 +5,6 @@ import Foundation
 nonisolated struct RepTracking: Equatable, Sendable {
     enum Phase: Equatable, Sendable {
         case searching
-        /// A person is visible but standing up — tracking is paused until
-        /// they get into the exercise position.
-        case wrongPosition
         case calibrating
         case top
         case charging
@@ -35,10 +32,6 @@ nonisolated struct RepEvent: Sendable {
 ///
 /// - Anchor: the neck (midpoint of the shoulders), falling back to one shoulder or the nose
 ///   with a learned nose→neck offset, then low-pass filtered.
-/// - Posture gate: the torso angle (mid-shoulder → mid-hip) must be roughly
-///   horizontal before anything is calibrated or counted — a standing person
-///   can never calibrate, fill the bar, or score, and standing up mid-workout
-///   wipes the calibration so it restarts cleanly when they lie back down.
 /// - Auto-calibration: the user holds the start position still for ~1 s; the shoulder span sets
 ///   the expected travel so the thresholds scale with distance from the camera.
 /// - Direction: push-ups charge while the anchor sinks (torso down); sit-ups charge while it
@@ -53,15 +46,6 @@ nonisolated struct RepDetector: Sendable {
     static let calibrationTolerance = 0.035
     static let lostTimeout = 2.5
 
-    /// Posture gate: the torso angle from the image's vertical axis must rise
-    /// above `lyingAngle` (deg) to count as lying down and fall below
-    /// `uprightAngle` to count as standing up (hysteresis between the two).
-    static let lyingAngle = 50.0
-    static let uprightAngle = 35.0
-    /// Seconds clearly upright before tracking resets. Kept below
-    /// `calibrationDuration` so a standing hold can never finish calibrating.
-    static let uprightResetDelay = 0.9
-
     /// Which movement is being counted. Sit-ups invert the charge direction
     /// (the torso rises instead of sinking) and use a wider travel range.
     var exercise: Exercise = .pushUps
@@ -74,12 +58,6 @@ nonisolated struct RepDetector: Sendable {
     private var minRange = 0.08
     private var noseToNeck = 0.07
     private var lastSeen = -Double.infinity
-
-    /// Whether the user is currently in the exercise position (torso roughly
-    /// horizontal). Starts true so a hidden-hips camera angle degrades to the
-    /// old, ungated behaviour instead of blocking forever.
-    private var isLying = true
-    private var uprightSince: Double?
 
     private var calibrationStart: Double?
     private var calibrationMin = 0.0
@@ -115,42 +93,6 @@ nonisolated struct RepDetector: Sendable {
             return event
         }
         lastSeen = now
-
-        // Posture gate: a standing person must never calibrate or fill the
-        // bar, and standing up mid-workout wipes the calibration so the next
-        // rep always starts from a fresh, honest range.
-        if let angle = torsoAngle(fromVerticalIn: frame) {
-            if !isLying, angle >= Self.lyingAngle {
-                isLying = true
-                uprightSince = nil
-            } else if isLying, angle < Self.uprightAngle {
-                let since = uprightSince ?? now
-                uprightSince = since
-                // Mid-rep poses (e.g. the top of a sit-up) lean vertical, so
-                // give a charged rep more time before calling it standing.
-                let limit = isCharged ? Self.uprightResetDelay + 1.2 : Self.uprightResetDelay
-                if now - since >= limit {
-                    isLying = false
-                    uprightSince = nil
-                    filtered = nil
-                    top = nil
-                    isCharged = false
-                    calibrationStart = nil
-                    state = RepTracking(phase: .wrongPosition, depth: 0, calibration: 0)
-                    return event
-                }
-            } else {
-                uprightSince = nil
-            }
-        }
-        guard isLying else {
-            filtered = nil
-            top = nil
-            isCharged = false
-            calibrationStart = nil
-            state = RepTracking(phase: .wrongPosition, depth: 0, calibration: 0)
-            return event
-        }
 
         let y = filtered.map { $0 + (raw - $0) * 0.45 } ?? raw
         filtered = y
@@ -269,31 +211,5 @@ nonisolated struct RepDetector: Sendable {
               let right = frame.joints[.rightShoulder],
               frame.imageSize.height > 0 else { return nil }
         return abs(left.x - right.x) * frame.imageSize.width / frame.imageSize.height
-    }
-
-    /// Angle of the torso (mid-shoulder → mid-hip) away from the image's
-    /// vertical axis, in degrees: ~0° upright, ~90° lying flat. Nil when the
-    /// shoulders and hips aren't both visible enough to judge.
-    private func torsoAngle(fromVerticalIn frame: PoseFrame) -> Double? {
-        let joints = frame.joints
-        let shoulderMid = Self.mid(joints[.leftShoulder], joints[.rightShoulder]) ?? joints[.neck]
-        let hipMid = Self.mid(joints[.leftHip], joints[.rightHip]) ?? joints[.root]
-        guard let shoulderMid, let hipMid else { return nil }
-        let dx = hipMid.x - shoulderMid.x
-        let dy = hipMid.y - shoulderMid.y
-        let length = (dx * dx + dy * dy).squareRoot()
-        // Too foreshortened to judge reliably (e.g. head-on and far away).
-        guard length > 0.015 else { return nil }
-        let cosine = min(max(dy / length, -1), 1)
-        return acos(cosine) * 180 / .pi
-    }
-
-    private static func mid(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {
-        switch (a, b) {
-        case let (a?, b?): CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
-        case let (a?, nil): a
-        case let (nil, b?): b
-        case (nil, nil): nil
-        }
     }
 }

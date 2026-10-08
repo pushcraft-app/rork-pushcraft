@@ -208,7 +208,6 @@ final class GameEngine {
         } else {
             switch tracking.phase {
             case .searching: next = .getInFrame
-            case .wrongPosition: next = .getInPosition
             case .calibrating: next = .holdTop
             case .top, .charging: next = .goDown
             case .charged: next = .smashIt

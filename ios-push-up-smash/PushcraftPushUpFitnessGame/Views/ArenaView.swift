@@ -9,6 +9,8 @@ struct ArenaView: View {
     let workouts: WorkoutService
     var onEnd: (_ reps: Int, _ blocks: Int, _ reason: WorkoutEndReason) -> Void
 
+    @Environment(AppState.self) private var appState
+
     @State private var engine: GameEngine
     @State private var remainingSeconds: Int
     @State private var hasEnded = false
@@ -17,6 +19,7 @@ struct ArenaView: View {
     @State private var countdownRemaining: Int?
     @State private var showGo = false
     @State private var sound = SoundService()
+    @State private var liveSync = BattleLiveSync()
     @Environment(\.scenePhase) private var scenePhase
 
     init(session: ActiveSession, workouts: WorkoutService, onEnd: @escaping (Int, Int, WorkoutEndReason) -> Void) {
@@ -77,6 +80,10 @@ struct ArenaView: View {
             engine.onRep = { [weak engine] in
                 guard let engine else { return }
                 workouts.checkpoint(id: session.id, reps: engine.reps, blocks: engine.smashCount)
+                liveSync.send(reps: engine.reps)
+            }
+            if let battleID = session.battleID {
+                liveSync.connect(battleID: battleID)
             }
             // Regular workouts wait for the countdown; battles score right
             // away because their clock is already running from the registered
@@ -87,6 +94,7 @@ struct ArenaView: View {
         }
         .onDisappear {
             checkpoint()
+            liveSync.disconnect()
             engine.stop()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -147,6 +155,7 @@ struct ArenaView: View {
         while !Task.isCancelled && !hasEnded {
             try? await Task.sleep(for: .seconds(4))
             checkpoint()
+            liveSync.send(reps: engine.reps)
         }
     }
 
@@ -245,68 +254,85 @@ struct ArenaView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
-            HStack(alignment: .top) {
-                StatCard(value: engine.reps, label: "REPS", tint: Theme.cyan) {
-                    Image(systemName: "figure.strengthtraining.functional")
-                        .font(.system(size: 19, weight: .bold))
-                        .foregroundStyle(Theme.cyan)
-                        .shadow(color: Theme.cyan, radius: 4)
+            if session.isBattle {
+                VersusHeader(
+                    myReps: engine.reps,
+                    opponentReps: liveSync.opponentReps,
+                    myName: appState.progress.displayName,
+                    myAvatarPath: appState.progress.dashboard?.profile.avatarPath,
+                    opponentName: battle?.opponentName,
+                    opponentAvatarPath: battle?.opponentAvatarPath
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+            } else {
+                HStack(alignment: .top) {
+                    StatCard(value: engine.reps, label: "REPS", tint: Theme.cyan) {
+                        Image(systemName: "figure.strengthtraining.functional")
+                            .font(.system(size: 19, weight: .bold))
+                            .foregroundStyle(Theme.cyan)
+                            .shadow(color: Theme.cyan, radius: 4)
+                    }
+                    Spacer(minLength: 12)
+                    StatCard(value: engine.displayedCoins, label: "COINS", tint: Theme.gold) {
+                        Image("gold_coin_star")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 26, height: 26)
+                            .shadow(color: Theme.gold.opacity(0.8), radius: 6)
+                            .onGeometryChange(for: CGRect.self) { proxy in
+                                proxy.frame(in: .global)
+                            } action: { frame in
+                                engine.layout.coinTarget = CGPoint(x: frame.midX, y: frame.midY)
+                            }
+                    }
                 }
-                Spacer(minLength: 12)
-                StatCard(value: engine.displayedCoins, label: "COINS", tint: Theme.gold) {
-                    Image("gold_coin_star")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 26, height: 26)
-                        .shadow(color: Theme.gold.opacity(0.8), radius: 6)
-                        .onGeometryChange(for: CGRect.self) { proxy in
-                            proxy.frame(in: .global)
-                        } action: { frame in
-                            engine.layout.coinTarget = CGPoint(x: frame.midX, y: frame.midY)
-                        }
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 10)
 
             blockStage
-                .padding(.top, 18)
+                .padding(.top, 14)
 
-            Spacer(minLength: 16)
+            Spacer(minLength: 12)
 
-            VStack(spacing: 10) {
+            // Tighter grouping that hugs the bottom edge so the block and
+            // body stay unobstructed.
+            VStack(spacing: 6) {
                 DepthMeter(tracking: engine.tracking)
                     .padding(.horizontal, 40)
                 CueView(cue: engine.cue, exercise: engine.exercise)
             }
-            .padding(.bottom, 20)
+            .padding(.bottom, 10)
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: showProgressTip)
     }
 
     private var topBar: some View {
         HStack(spacing: 10) {
-            Button {
-                if engine.reps == 0 && !session.isBattle {
-                    end(.finished)
-                } else {
-                    confirmEnd = true
+            if !session.isBattle {
+                Button {
+                    if engine.reps == 0 {
+                        end(.finished)
+                    } else {
+                        confirmEnd = true
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .heavy))
+                        Text("Done")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .background(Theme.panel, in: .capsule)
+                    .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
                 }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: session.isBattle ? "flag.checkered" : "xmark")
-                        .font(.system(size: 13, weight: .heavy))
-                    Text(session.isBattle ? "End run" : "Done")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(height: 40)
-                .background(Theme.panel, in: .capsule)
-                .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+                .buttonStyle(PressScaleStyle())
+                .accessibilityLabel("Done with workout")
             }
-            .buttonStyle(PressScaleStyle())
-            .accessibilityLabel(session.isBattle ? "End battle run" : "Done with workout")
 
             Spacer(minLength: 8)
 
@@ -400,7 +426,7 @@ struct ArenaView: View {
                         ))
                 }
             }
-            .frame(width: 150, height: 150)
+            .frame(width: 128, height: 128)
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
             } action: { frame in
@@ -429,6 +455,10 @@ struct ArenaView: View {
         case .failed: .failed
         case .idle, .running: nil
         }
+    }
+
+    private var battle: Battle? {
+        session.battleID.flatMap { appState.battles.battle(withID: $0) }
     }
 }
 
@@ -479,6 +509,133 @@ private struct PayoutText: View {
         .shadow(color: Theme.gold.opacity(0.9), radius: 12)
         .shadow(color: .black.opacity(0.6), radius: 2, x: 0, y: 3)
         .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Battle versus HUD
+
+/// Battle-only header: both players' photos ringed in their color (blue = you,
+/// red = opponent), live rep counts, and a tug-of-war gauge under the row —
+/// the divider slides toward whoever is doing more push-ups right now.
+private struct VersusHeader: View {
+    let myReps: Int
+    let opponentReps: Int
+    let myName: String
+    let myAvatarPath: String?
+    let opponentName: String?
+    let opponentAvatarPath: String?
+
+    private static let myColor = Theme.cyan
+    private static let opponentColor = Color(hex: 0xFF5A5A)
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(alignment: .center) {
+                player(name: myName, reps: myReps, avatarPath: myAvatarPath, ring: Self.myColor, isLeading: true)
+
+                Spacer(minLength: 10)
+
+                Text("VS")
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .tracking(1.5)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .shadow(color: .black.opacity(0.6), radius: 3)
+
+                Spacer(minLength: 10)
+
+                player(
+                    name: opponentName ?? "Waiting…",
+                    reps: opponentReps,
+                    avatarPath: opponentAvatarPath,
+                    ring: Self.opponentColor,
+                    isLeading: false
+                )
+            }
+
+            gauge
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Theme.panel, in: .rect(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.14), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+    }
+
+    private func player(name: String, reps: Int, avatarPath: String?, ring: Color, isLeading: Bool) -> some View {
+        HStack(spacing: 8) {
+            if !isLeading {
+                repCount(reps, color: ring)
+            }
+            VersusAvatar(name: name, avatarPath: avatarPath, ring: ring)
+            if isLeading {
+                repCount(reps, color: ring)
+            }
+        }
+    }
+
+    private func repCount(_ reps: Int, color: Color) -> some View {
+        Text("\(reps)")
+            .font(.system(size: 24, weight: .black, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .shadow(color: color.opacity(0.8), radius: 6)
+            .contentTransition(.numericText())
+            .animation(.snappy, value: reps)
+    }
+
+    /// One capsule, blue filling from the left and red from the right. While
+    /// nobody has scored it sits exactly centered.
+    private var gauge: some View {
+        let total = myReps + opponentReps
+        let share: CGFloat = total == 0 ? 0.5 : CGFloat(myReps) / CGFloat(total)
+        return GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(
+                        .linearGradient(
+                            colors: [Self.opponentColor, Self.opponentColor.opacity(0.7)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .shadow(color: Self.opponentColor.opacity(0.6), radius: 5)
+
+                Capsule()
+                    .fill(
+                        .linearGradient(
+                            colors: [Self.myColor.opacity(0.7), Self.myColor],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(proxy.size.width * share, proxy.size.height))
+                    .shadow(color: Self.myColor.opacity(0.7), radius: 5)
+            }
+        }
+        .frame(height: 12)
+        .overlay { Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1) }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: share)
+        .accessibilityLabel("Push-up gauge")
+        .accessibilityValue("You \(myReps), opponent \(opponentReps)")
+    }
+}
+
+/// Circular player photo with the player's colored ring on top.
+private struct VersusAvatar: View {
+    let name: String?
+    let avatarPath: String?
+    let ring: Color
+
+    var body: some View {
+        BattleAvatar(name: name, avatarPath: avatarPath, size: 44)
+            .overlay {
+                Circle()
+                    .strokeBorder(ring, lineWidth: 2.5)
+                    .shadow(color: ring.opacity(0.8), radius: 5)
+            }
     }
 }
 
