@@ -6,7 +6,7 @@
       "path": "ios-push-up-smash",
       "framework": "swift",
       "settings": {
-        "displayName": "Pushcraft",
+        "displayName": "Pushcraft: PushUp Fitness Game",
         "iosBundleId": "com.tinochiwara.pushcraft"
       }
     },

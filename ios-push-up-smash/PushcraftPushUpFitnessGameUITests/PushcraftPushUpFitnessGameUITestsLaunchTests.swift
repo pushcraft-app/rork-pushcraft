@@ -1,13 +1,13 @@
 //
-//  PushcraftUITestsLaunchTests.swift
-//  PushcraftUITests
+//  PushcraftPushUpFitnessGameUITestsLaunchTests.swift
+//  PushcraftPushUpFitnessGameUITests
 //
 //  Created by Rork on September 30, 2026.
 //
 
 import XCTest
 
-final class PushcraftUITestsLaunchTests: XCTestCase {
+final class PushcraftPushUpFitnessGameUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

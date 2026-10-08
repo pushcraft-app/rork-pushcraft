@@ -1,14 +1,14 @@
 //
-//  PushcraftTests.swift
-//  PushcraftTests
+//  PushcraftPushUpFitnessGameTests.swift
+//  PushcraftPushUpFitnessGameTests
 //
 //  Created by Rork on September 30, 2026.
 //
 
 import Testing
-@testable import Pushcraft
+@testable import PushcraftPushUpFitnessGame
 
-struct PushcraftTests {
+struct PushcraftPushUpFitnessGameTests {
 
     @Test func example() async throws {
         // Write your test here and use APIs like `#expect(...)` to check expected conditions.

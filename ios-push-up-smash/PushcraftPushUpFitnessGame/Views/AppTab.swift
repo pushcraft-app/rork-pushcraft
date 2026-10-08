@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The four main sections of Pushcraft.
+/// The four main sections of PushcraftPushUpFitnessGame.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case home
     case towers

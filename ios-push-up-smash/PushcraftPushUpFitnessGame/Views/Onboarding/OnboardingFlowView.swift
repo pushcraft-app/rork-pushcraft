@@ -188,7 +188,7 @@ struct OnboardingFlowView: View {
         case .name:
             NameScreen(model: model)
         case .mainGoal:
-            SingleChoiceScreen(title: "What brings you to Pushcraft?", selection: $model.mainGoal)
+            SingleChoiceScreen(title: "What brings you to PushcraftPushUpFitnessGame?", selection: $model.mainGoal)
         case .experience:
             SingleChoiceScreen(title: "How experienced are you with exercise?", selection: $model.experience)
         case .gender:

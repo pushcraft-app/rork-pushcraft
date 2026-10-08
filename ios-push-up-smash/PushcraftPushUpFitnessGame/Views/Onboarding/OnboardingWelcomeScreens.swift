@@ -35,7 +35,7 @@ struct WelcomeScreen: View {
 
             VStack(spacing: 0) {
                 VStack(spacing: 4) {
-                    Text("Pushcraft")
+                    Text("PushcraftPushUpFitnessGame")
                         .font(.system(size: 48, weight: .bold, design: .serif))
                         .foregroundStyle(
                             .linearGradient(colors: [Theme.amberSoft, Theme.amberDeep], startPoint: .top, endPoint: .bottom)
