@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The Tower Trail: a scrollable fantasy map between Home and the journey
-/// timeline. The user's towers sit along a painted golden mountain path —
-/// tapping an unlocked tower opens that tower's journey.
+/// timeline. The user's towers stand on floating twilight islands linked
+/// by stone bridges — tapping an unlocked tower opens that tower's journey.
 struct TowerTrailView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -23,14 +23,14 @@ struct TowerTrailView: View {
             ?? towers.last { $0.status == .completed }?.id
     }
 
-    /// Node anchors along the painted path, first tower at the bottom.
-    /// Fraction of the scene canvas.
-    private static let slots: [(x: CGFloat, y: CGFloat)] = [
-        (0.60, 0.845), // bottom bridge
-        (0.79, 0.730), // right bend past the bridge
-        (0.24, 0.545), // left plateau by the waterfall
-        (0.73, 0.400), // upper ridge zigzag
-        (0.48, 0.260)  // summit
+    /// Island anchors on the trail painting, first tower at the bottom.
+    /// Fraction of the map image (not the scroll canvas).
+    private static let islandSlots: [(x: CGFloat, y: CGFloat)] = [
+        (0.42, 0.720), // Oakspire — lowest island, bottom left
+        (0.64, 0.600), // Stonewatch — island above right
+        (0.36, 0.490), // Frostkeep — mid-left island
+        (0.64, 0.375), // Emberhold — island above right
+        (0.46, 0.280)  // Skyward Spire — summit island
     ]
 
     var body: some View {
@@ -65,17 +65,23 @@ struct TowerTrailView: View {
     // MARK: - Scene
 
     private func scene(width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
-            Image("mountain_night_landscape")
-                .resizable()
-                .scaledToFill()
-                // Larger than the canvas so push/pull bounce reveals more
-                // scenery instead of empty background.
-                .frame(width: width, height: height + 520)
-                .clipped()
+        // The painting is 2:3; displayed full-width and centered in the tall
+        // canvas, with blurred twilight sky filling the rest so push/pull
+        // bounce always reveals scenery.
+        let mapHeight = width * 1.5
+        let skyPad = max(0, (height - mapHeight) / 2)
+
+        return ZStack(alignment: .topLeading) {
+            skyExtension(width: width, height: skyPad, above: true)
+
+            skyExtension(width: width, height: skyPad, above: false)
+                .offset(y: height - skyPad)
+
+            mapImage(width: width, height: mapHeight)
+                .offset(y: skyPad)
 
             ForEach(Array(towers.enumerated()), id: \.element.id) { index, tower in
-                let slot = Self.slots[min(index, Self.slots.count - 1)]
+                let slot = Self.islandSlots[min(index, Self.islandSlots.count - 1)]
                 TrailNode(
                     tower: tower,
                     isCurrent: tower.id == currentTowerID,
@@ -86,10 +92,39 @@ struct TowerTrailView: View {
                     showsHint: hintTowerID == tower.id,
                     onTap: { handleTap(tower) }
                 )
-                .position(x: width * slot.x, y: height * slot.y)
+                .position(x: width * slot.x, y: skyPad + mapHeight * slot.y)
             }
         }
         .frame(width: width, height: height)
+    }
+
+    /// The trail painting at its exact 2:3 aspect so nothing is cropped
+    /// or stretched.
+    private func mapImage(width: CGFloat, height: CGFloat) -> some View {
+        Image("floating_islands_twilight")
+            .resizable()
+            .scaledToFill()
+            .frame(width: width, height: height)
+            .clipped()
+    }
+
+    /// Blurred band of the painting extending the sky above or below the
+    /// map, fading into the app background at the outer edge.
+    private func skyExtension(width: CGFloat, height: CGFloat, above: Bool) -> some View {
+        Image("floating_islands_twilight")
+            .resizable()
+            .scaledToFill()
+            .frame(width: width, height: height + 120)
+            .blur(radius: 18)
+            .frame(width: width, height: height, alignment: above ? .bottom : .top)
+            .clipped()
+            .overlay(
+                LinearGradient(
+                    colors: [Theme.night.opacity(above ? 0.85 : 0.5), Theme.night.opacity(0)],
+                    startPoint: above ? .top : .bottom,
+                    endPoint: above ? .bottom : .top
+                )
+            )
     }
 
     // MARK: - Actions
