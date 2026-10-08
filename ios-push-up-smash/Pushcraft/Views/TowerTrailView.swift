@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// The Tower Trail: a scrollable fantasy map between Home and the journey
-/// timeline. The user's towers stand on floating twilight islands linked
-/// by stone bridges — tapping an unlocked tower opens that tower's journey.
+/// timeline. The user's towers stand on floating islands linked by stone
+/// bridges — tapping an unlocked tower opens that tower's journey.
 struct TowerTrailView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -26,11 +26,11 @@ struct TowerTrailView: View {
     /// Island anchors on the trail painting, first tower at the bottom.
     /// Fraction of the map image (not the scroll canvas).
     private static let islandSlots: [(x: CGFloat, y: CGFloat)] = [
-        (0.42, 0.720), // Oakspire — lowest island, bottom left
-        (0.64, 0.600), // Stonewatch — island above right
-        (0.36, 0.490), // Frostkeep — mid-left island
-        (0.64, 0.375), // Emberhold — island above right
-        (0.46, 0.280)  // Skyward Spire — summit island
+        (0.38, 0.705), // Oakspire — lowest island, bottom left
+        (0.62, 0.585), // Stonewatch — island above right
+        (0.36, 0.475), // Frostkeep — mid-left island
+        (0.64, 0.360), // Emberhold — island above right
+        (0.42, 0.275)  // Skyward Spire — summit island
     ]
 
     var body: some View {
@@ -66,8 +66,8 @@ struct TowerTrailView: View {
 
     private func scene(width: CGFloat, height: CGFloat) -> some View {
         // The painting is 2:3; displayed full-width and centered in the tall
-        // canvas, with blurred twilight sky filling the rest so push/pull
-        // bounce always reveals scenery.
+        // canvas, with soft sky filling the rest so push/pull bounce always
+        // reveals more clouds.
         let mapHeight = width * 1.5
         let skyPad = max(0, (height - mapHeight) / 2)
 
@@ -101,30 +101,23 @@ struct TowerTrailView: View {
     /// The trail painting at its exact 2:3 aspect so nothing is cropped
     /// or stretched.
     private func mapImage(width: CGFloat, height: CGFloat) -> some View {
-        Image("floating_islands_twilight")
+        Image("floating_islands_trail_map")
             .resizable()
             .scaledToFill()
             .frame(width: width, height: height)
             .clipped()
     }
 
-    /// Blurred band of the painting extending the sky above or below the
-    /// map, fading into the app background at the outer edge.
+    /// Band of the painting extending the sky above or below the map,
+    /// softened so it reads as continuing clouds.
     private func skyExtension(width: CGFloat, height: CGFloat, above: Bool) -> some View {
-        Image("floating_islands_twilight")
+        Image("floating_islands_trail_map")
             .resizable()
             .scaledToFill()
             .frame(width: width, height: height + 120)
-            .blur(radius: 18)
+            .blur(radius: 10)
             .frame(width: width, height: height, alignment: above ? .bottom : .top)
             .clipped()
-            .overlay(
-                LinearGradient(
-                    colors: [Theme.night.opacity(above ? 0.85 : 0.5), Theme.night.opacity(0)],
-                    startPoint: above ? .top : .bottom,
-                    endPoint: above ? .bottom : .top
-                )
-            )
     }
 
     // MARK: - Actions
@@ -206,18 +199,16 @@ private struct TrailNode: View {
                         isLocked: isLocked
                     )
                     .frame(height: width * 1.5)
+                    .opacity(isLocked ? 0.45 : 1)
 
                     if tower.status == .completed {
                         badge(symbol: "checkmark", fill: Theme.amberSoft, symbolColor: Color(hex: 0x3A2200))
-                    }
-                    if isLocked {
-                        badge(symbol: "lock.fill", fill: .black.opacity(0.55), symbolColor: Theme.amberSoft)
                     }
                 }
 
                 if isCurrent {
                     youAreHerePlaque
-                } else {
+                } else if !isLocked {
                     namePlate
                 }
             }
