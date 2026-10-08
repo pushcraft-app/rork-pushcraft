@@ -65,20 +65,20 @@ struct TowerTrailView: View {
     // MARK: - Scene
 
     private func scene(width: CGFloat, height: CGFloat) -> some View {
-        // The painting is 2:3; displayed full-width and centered in the tall
-        // canvas, with soft sky filling the rest so push/pull bounce always
-        // reveals more clouds.
-        let mapHeight = width * 1.5
+        // Cloud sky covers the whole canvas; the islands painting renders
+        // zoomed-in (1.25× screen width) and centered so towers read large,
+        // with the edge islands kept clear of the screen edges.
+        let zoom: CGFloat = 1.25
+        let mapWidth = width * zoom
+        let mapHeight = mapWidth * 1.5
+        let mapX = (width - mapWidth) / 2
         let skyPad = max(0, (height - mapHeight) / 2)
 
         return ZStack(alignment: .topLeading) {
-            skyExtension(width: width, height: skyPad, above: true)
+            cloudSky(width: width, height: height)
 
-            skyExtension(width: width, height: skyPad, above: false)
-                .offset(y: height - skyPad)
-
-            mapImage(width: width, height: mapHeight)
-                .offset(y: skyPad)
+            mapImage(width: mapWidth, height: mapHeight)
+                .offset(x: mapX, y: skyPad)
 
             ForEach(Array(towers.enumerated()), id: \.element.id) { index, tower in
                 let slot = Self.islandSlots[min(index, Self.islandSlots.count - 1)]
@@ -92,31 +92,28 @@ struct TowerTrailView: View {
                     showsHint: hintTowerID == tower.id,
                     onTap: { handleTap(tower) }
                 )
-                .position(x: width * slot.x, y: skyPad + mapHeight * slot.y)
+                .position(x: mapX + mapWidth * slot.x, y: skyPad + mapHeight * slot.y)
             }
         }
         .frame(width: width, height: height)
     }
 
-    /// The trail painting at its exact 2:3 aspect so nothing is cropped
-    /// or stretched.
-    private func mapImage(width: CGFloat, height: CGFloat) -> some View {
-        Image("floating_islands_trail_map")
+    /// Sharp cloud painting filling the entire screen behind the map, so
+    /// push/pull bounce always reveals real clouds — no blur bands.
+    private func cloudSky(width: CGFloat, height: CGFloat) -> some View {
+        Image("sky_clouds_background")
             .resizable()
             .scaledToFill()
             .frame(width: width, height: height)
             .clipped()
     }
 
-    /// Band of the painting extending the sky above or below the map,
-    /// softened so it reads as continuing clouds.
-    private func skyExtension(width: CGFloat, height: CGFloat, above: Bool) -> some View {
+    /// The trail painting at its exact 2:3 aspect so nothing is stretched.
+    private func mapImage(width: CGFloat, height: CGFloat) -> some View {
         Image("floating_islands_trail_map")
             .resizable()
             .scaledToFill()
-            .frame(width: width, height: height + 120)
-            .blur(radius: 10)
-            .frame(width: width, height: height, alignment: above ? .bottom : .top)
+            .frame(width: width, height: height)
             .clipped()
     }
 
@@ -191,6 +188,9 @@ private struct TrailNode: View {
                     if isCurrent {
                         glow
                     }
+                    if isLocked {
+                        lockedHalo
+                    }
 
                     TowerConstructionView(
                         towerID: tower.id,
@@ -199,7 +199,6 @@ private struct TrailNode: View {
                         isLocked: isLocked
                     )
                     .frame(height: width * 1.5)
-                    .opacity(isLocked ? 0.45 : 1)
 
                     if tower.status == .completed {
                         badge(symbol: "checkmark", fill: Theme.amberSoft, symbolColor: Color(hex: 0x3A2200))
@@ -249,6 +248,21 @@ private struct TrailNode: View {
             .scaleEffect(glowPulse ? 1.1 : 0.92)
             .opacity(glowPulse ? 1 : 0.65)
             .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: glowPulse)
+    }
+
+    /// Soft navy halo behind a locked tower so its dashed ivory silhouette
+    /// stays readable against the bright sky.
+    private var lockedHalo: some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [Color(hex: 0x14224A).opacity(0.4), Color(hex: 0x14224A).opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: width * 0.7
+                )
+            )
+            .frame(width: width * 1.4, height: width * 1.4)
     }
 
     private func badge(symbol: String, fill: Color, symbolColor: Color) -> some View {
