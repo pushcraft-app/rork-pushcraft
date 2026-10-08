@@ -60,7 +60,7 @@ struct AccountSheet: View {
             }
         }
         .confirmationDialog(
-            "Sign out of PushcraftPushUpFitnessGame?",
+            "Sign out of Pushcraft?",
             isPresented: $confirmSignOut,
             titleVisibility: .visible
         ) {
@@ -165,9 +165,9 @@ struct SubscriptionSheet: View {
 
     private var planName: String {
         let id = appState.store.activeProductID ?? ""
-        if id.contains("year") { return "PushcraftPushUpFitnessGame Yearly" }
-        if id.contains("week") { return "PushcraftPushUpFitnessGame Weekly" }
-        return "PushcraftPushUpFitnessGame Premium"
+        if id.contains("year") { return "Pushcraft Yearly" }
+        if id.contains("week") { return "Pushcraft Weekly" }
+        return "Pushcraft Premium"
     }
 
     private var statusText: String {

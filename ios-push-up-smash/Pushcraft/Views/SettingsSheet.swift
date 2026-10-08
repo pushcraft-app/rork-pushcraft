@@ -90,7 +90,7 @@ struct SettingsSheet: View {
         .alert("Give Us a Review", isPresented: $showReviewDialog) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("This opens our App Store review page once PushcraftPushUpFitnessGame is published. The App Store app ID isn't configured yet in this prototype.")
+            Text("This opens our App Store review page once Pushcraft is published. The App Store app ID isn't configured yet in this prototype.")
         }
         .alert("Contact Support", isPresented: $showMailDialog) {
             Button("Copy Email") {
