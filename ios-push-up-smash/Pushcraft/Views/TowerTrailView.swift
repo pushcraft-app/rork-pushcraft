@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The Tower Trail: the painted journey map fills the phone edge-to-edge and
-/// scrolls with push/pull bounce. Live tower cards sit exactly over the towers
-/// painted into the artwork — tapping an unlocked tower opens its journey.
+/// The Tower Trail: the painted journey map fills the whole phone edge-to-edge
+/// (under the Dynamic Island and home indicator) as a fixed, non-scrolling
+/// scene. Live tower cards sit exactly over the towers painted into the
+/// artwork — tapping an unlocked tower opens its journey.
 struct TowerTrailView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -10,13 +11,14 @@ struct TowerTrailView: View {
     /// Native pixel size of the painted map artwork.
     private static let mapSize = CGSize(width: 852, height: 1847)
 
-    /// Card centers as fractions of the painted map, first tower at the bottom.
-    private static let cardSlots: [(x: CGFloat, y: CGFloat)] = [
-        (0.278, 0.745), // Oakspire
-        (0.711, 0.609), // Stonewatch
-        (0.276, 0.475), // Frostkeep
-        (0.712, 0.339), // Emberhold
-        (0.276, 0.193)  // Skyward Spire
+    /// Card and name-label centers in map pixels, first tower at the bottom.
+    /// Labels sit where the (erased) painted names were.
+    private static let slots: [(card: CGPoint, label: CGPoint)] = [
+        (CGPoint(x: 237, y: 1376), CGPoint(x: 245, y: 1488)), // Oakspire
+        (CGPoint(x: 606, y: 1125), CGPoint(x: 609, y: 1223)), // Stonewatch
+        (CGPoint(x: 235, y: 877), CGPoint(x: 237, y: 975)),   // Frostkeep
+        (CGPoint(x: 607, y: 626), CGPoint(x: 607, y: 706)),   // Emberhold
+        (CGPoint(x: 235, y: 356), CGPoint(x: 235, y: 458))    // Skyward Spire
     ]
 
     @State private var showJourney = false
@@ -37,50 +39,49 @@ struct TowerTrailView: View {
 
     var body: some View {
         GeometryReader { geo in
-            // Scale the painting so it covers the entire screen; any leftover
-            // height becomes scrollable push/pull space.
-            let coverScale = max(geo.size.width / Self.mapSize.width, geo.size.height / Self.mapSize.height)
-            let mapWidth = Self.mapSize.width * coverScale
-            let mapHeight = Self.mapSize.height * coverScale
-            let contentHeight = max(mapHeight, geo.size.height)
-            let mapTop = (contentHeight - mapHeight) / 2
+            // Aspect-fill the painting over the full screen (safe areas
+            // included); cards use the same transform so they stay seated.
+            let scale = max(geo.size.width / Self.mapSize.width, geo.size.height / Self.mapSize.height)
+            let mapWidth = Self.mapSize.width * scale
+            let mapHeight = Self.mapSize.height * scale
             let mapLeading = (geo.size.width - mapWidth) / 2
+            let mapTop = (geo.size.height - mapHeight) / 2
+            let nodeSize = Self.mapSize.width * scale * 0.25
 
             ZStack(alignment: .topLeading) {
-                ScrollView(showsIndicators: false) {
-                    ZStack(alignment: .topLeading) {
-                        Theme.night
-                            .frame(width: geo.size.width, height: contentHeight)
+                mapImage(width: mapWidth, height: mapHeight)
+                    .offset(x: mapLeading, y: mapTop)
 
-                        mapImage(width: mapWidth, height: mapHeight)
-                            .offset(x: mapLeading, y: mapTop)
-
-                        ForEach(Array(towers.enumerated()), id: \.element.id) { index, tower in
-                            let slot = Self.cardSlots[min(index, Self.cardSlots.count - 1)]
-                            TrailNode(
-                                tower: tower,
-                                isCurrent: tower.id == currentTowerID,
-                                size: geo.size.width * 0.25,
-                                glowPulse: glowPulse,
-                                isShaking: hintTowerID == tower.id,
-                                shakeProgress: shakeProgress,
-                                showsHint: hintTowerID == tower.id,
-                                onTap: { handleTap(tower) }
-                            )
-                            .position(
-                                x: mapLeading + mapWidth * slot.x,
-                                y: mapTop + mapHeight * slot.y
-                            )
-                        }
-                    }
-                    .frame(width: geo.size.width, height: contentHeight)
+                ForEach(Array(towers.enumerated()), id: \.element.id) { index, tower in
+                    let slot = Self.slots[min(index, Self.slots.count - 1)]
+                    TrailNode(
+                        tower: tower,
+                        isCurrent: tower.id == currentTowerID,
+                        size: nodeSize,
+                        labelOffset: CGSize(
+                            width: (slot.label.x - slot.card.x) * scale,
+                            height: (slot.label.y - slot.card.y) * scale
+                        ),
+                        glowPulse: glowPulse,
+                        isShaking: hintTowerID == tower.id,
+                        shakeProgress: shakeProgress,
+                        showsHint: hintTowerID == tower.id,
+                        onTap: { handleTap(tower) }
+                    )
+                    .position(
+                        x: mapLeading + slot.card.x * scale,
+                        y: mapTop + slot.card.y * scale
+                    )
                 }
-                .scrollBounceBehavior(.always)
-
-                backButton
-                    .padding(.leading, 20)
-                    .padding(.top, 6)
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .overlay(alignment: .topLeading) {
+            backButton
+                .padding(.leading, 20)
+                .padding(.top, 6)
         }
         .background(Theme.night.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -159,6 +160,8 @@ private struct TrailNode: View {
     let tower: Tower
     let isCurrent: Bool
     let size: CGFloat
+    /// Offset from the card center to where the name label is centered.
+    let labelOffset: CGSize
     let glowPulse: Bool
     let isShaking: Bool
     let shakeProgress: CGFloat
@@ -177,9 +180,10 @@ private struct TrailNode: View {
     var body: some View {
         Button(action: onTap) {
             card
-                .overlay(alignment: .bottom) {
+                .overlay {
                     label
-                        .offset(y: size * 0.24)
+                        .fixedSize()
+                        .offset(labelOffset)
                 }
         }
         .buttonStyle(PressScaleStyle())
