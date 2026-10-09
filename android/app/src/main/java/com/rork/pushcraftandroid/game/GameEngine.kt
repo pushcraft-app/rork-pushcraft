@@ -167,7 +167,7 @@ class GameEngine(val exercise: Exercise = Exercise.PushUps, firstBlockHealth: In
             displayedCoins = coins
             prune()
         }
-        after(1450, gen) {
+        after(500, gen) {
             isCelebrating = false
             spawn(spec.level + 1)
             updateCue()

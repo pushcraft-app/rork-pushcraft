@@ -19,10 +19,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
 
@@ -102,41 +105,154 @@ val List<Battle>.invitation: Battle? get() = firstOrNull { it.isInvitation }
 val List<Battle>.active: List<Battle> get() = filter { it.phase == BattlePhase.Waiting || it.phase == BattlePhase.Active }
 val List<Battle>.completed: List<Battle> get() = filter { it.phase == BattlePhase.Completed }
 
-/** Live rep sync over a Supabase Realtime broadcast channel keyed to the battle. */
+/**
+ * Live link between the two phones in a battle, over a Supabase Realtime
+ * broadcast channel keyed to the battle ID. Same protocol as the iPhone app:
+ * - `ready` every second while waiting, so the other phone knows we're here.
+ * - `start` with `elapsed_ms` since the countdown began, every second once it
+ *   started. The host starts it on hearing the guest; the guest aligns to it.
+ * - `reps` on every rep and repeated every second.
+ * Every message carries the sender's `role` ("host" / "guest").
+ */
 class BattleLiveSync {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _opponentReps = MutableStateFlow(0)
     val opponentReps: StateFlow<Int> = _opponentReps.asStateFlow()
-    private var channel: RealtimeChannel? = null
-    private var listenJob: Job? = null
-    private var lastSent = -1
+    private val _isConnected = MutableStateFlow(false)
+    val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+    /** Wall-clock millis the shared 5-second countdown began; null while waiting. */
+    private val _startAnchor = MutableStateFlow<Long?>(null)
+    val startAnchor: StateFlow<Long?> = _startAnchor.asStateFlow()
 
-    fun connect(battleId: String) {
+    private var channel: RealtimeChannel? = null
+    private val jobs = mutableListOf<Job>()
+    private var isHost = false
+    private var battleDuration = 60
+    private var myReps = 0
+    private var lastSent = -1
+    private val logged = mutableSetOf<String>()
+    private val role get() = if (isHost) "host" else "guest"
+
+    fun connect(battleId: String, isHost: Boolean, battleDuration: Int) {
         if (channel != null) return
-        val ch = Backend.client.channel("battle:${battleId.lowercase()}")
+        this.isHost = isHost
+        this.battleDuration = battleDuration
+        val topic = "battle:${battleId.lowercase()}"
+        val ch = Backend.client.channel(topic)
         channel = ch
-        val flow = ch.broadcastFlow<JsonObject>(event = "reps")
-        listenJob = scope.launch {
-            flow.collect { payload ->
-                val prim = payload["reps"]?.jsonPrimitive
-                val reps = prim?.intOrNull ?: prim?.doubleOrNull?.toInt() ?: return@collect
-                _opponentReps.value = maxOf(_opponentReps.value, reps)
+        Log.i(TAG, "Joining $topic as $role")
+        for (event in listOf(EVENT_READY, EVENT_START, EVENT_REPS)) {
+            val flow = ch.broadcastFlow<JsonObject>(event = event)
+            jobs += scope.launch { flow.collect { handle(event, it) } }
+        }
+        jobs += scope.launch {
+            while (isActive) {
+                if (ch.status.value == RealtimeChannel.Status.UNSUBSCRIBED) {
+                    runCatching { ch.subscribe() }.onFailure { Log.w(TAG, "Subscribe failed: ${it.message}") }
+                }
+                val connected = ch.status.value == RealtimeChannel.Status.SUBSCRIBED
+                if (connected != _isConnected.value) {
+                    _isConnected.value = connected
+                    Log.i(TAG, if (connected) "Connected" else "Not connected yet")
+                }
+                delay(if (connected) 2000 else 1000)
             }
         }
-        scope.launch { runCatching { ch.subscribe() } }
+        jobs += scope.launch {
+            while (isActive) {
+                val anchor = _startAnchor.value
+                if (anchor != null) {
+                    send(EVENT_START, buildJsonObject { put("elapsed_ms", System.currentTimeMillis() - anchor) })
+                    lastSent = myReps
+                    send(EVENT_REPS, buildJsonObject { put("reps", myReps) })
+                } else {
+                    send(EVENT_READY, buildJsonObject { })
+                }
+                delay(1000)
+            }
+        }
     }
 
-    fun send(reps: Int) {
-        val ch = channel ?: return
-        if (reps == lastSent) return
+    /** Starts the countdown without an opponent (they already played their run). */
+    fun beginSolo() {
+        if (_startAnchor.value != null) return
+        _startAnchor.value = System.currentTimeMillis()
+        Log.i(TAG, "Opponent already played — starting solo")
+    }
+
+    /** Records the local rep count and sends it right away when it changed. */
+    fun update(reps: Int) {
+        myReps = reps
+        if (_startAnchor.value == null || reps == lastSent) return
         lastSent = reps
-        scope.launch { runCatching { ch.broadcast(event = "reps", message = buildJsonObject { put("reps", reps) }) } }
+        send(EVENT_REPS, buildJsonObject { put("reps", reps) })
+        Log.i(TAG, "Sent reps $reps")
     }
 
     fun disconnect() {
-        listenJob?.cancel()
+        jobs.forEach { it.cancel() }
+        jobs.clear()
+        _isConnected.value = false
         val ch = channel ?: return
         channel = null
-        scope.launch { runCatching { Backend.client.realtime.removeChannel(ch) } }
+        CoroutineScope(Dispatchers.IO).launch { runCatching { Backend.client.realtime.removeChannel(ch) } }
+    }
+
+    private fun send(event: String, fields: JsonObject) {
+        val ch = channel ?: return
+        if (ch.status.value != RealtimeChannel.Status.SUBSCRIBED) return
+        val message = JsonObject(fields + ("role" to JsonPrimitive(role)))
+        scope.launch {
+            runCatching { ch.broadcast(event = event, message = message) }
+                .onFailure { Log.w(TAG, "Send $event failed: ${it.message}") }
+        }
+    }
+
+    private fun handle(event: String, message: JsonObject) {
+        // Accept both the bare payload and the full {type, event, payload} envelope.
+        val body = (message["payload"] as? JsonObject) ?: message
+        if ((body["role"] as? JsonPrimitive)?.contentOrNull == role) return
+        if (logged.add(event)) Log.i(TAG, "First '$event' received from opponent")
+        when (event) {
+            EVENT_READY -> if (isHost && _startAnchor.value == null) {
+                _startAnchor.value = System.currentTimeMillis()
+                Log.i(TAG, "Both players here — host starts the countdown")
+            }
+            EVENT_START -> {
+                val elapsed = number(body["elapsed_ms"])?.toLong() ?: return
+                val now = System.currentTimeMillis()
+                val peerAnchor = now - maxOf(0L, elapsed)
+                val current = _startAnchor.value
+                if (current != null) {
+                    // Only the guest re-aligns, and only before GO.
+                    val beforeGo = now < current + COUNTDOWN_MS
+                    if (isHost || !beforeGo || kotlin.math.abs(current - peerAnchor) <= 750) return
+                } else if (elapsed >= COUNTDOWN_MS + (battleDuration - 5) * 1000L) {
+                    return
+                }
+                _startAnchor.value = peerAnchor
+                Log.i(TAG, "Countdown synced to opponent ($elapsed ms in)")
+            }
+            EVENT_REPS -> {
+                val reps = number(body["reps"])?.toInt() ?: return
+                if (reps > _opponentReps.value) {
+                    _opponentReps.value = reps
+                    Log.i(TAG, "Opponent reps $reps")
+                }
+            }
+        }
+    }
+
+    private fun number(e: JsonElement?): Double? {
+        val p = e as? JsonPrimitive ?: return null
+        return p.doubleOrNull ?: p.contentOrNull?.toDoubleOrNull()
+    }
+
+    companion object {
+        const val COUNTDOWN_MS = 5000L
+        private const val TAG = "BattleLive"
+        private const val EVENT_READY = "ready"
+        private const val EVENT_START = "start"
+        private const val EVENT_REPS = "reps"
     }
 }

@@ -298,7 +298,7 @@ final class GameEngine {
             self.displayedCoins = self.coins
             self.pruneEffects()
         }
-        after(1.45, gen: gen) { [weak self] in
+        after(0.5, gen: gen) { [weak self] in
             guard let self else { return }
             self.isCelebrating = false
             self.spawn(level: self.spec.level + 1)

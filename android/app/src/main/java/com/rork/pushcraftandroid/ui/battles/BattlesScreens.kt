@@ -443,14 +443,11 @@ fun BattleDetailsScreen(appState: AppState, battleId: String, nav: NavController
                             error = "Your run for this battle is already saved and is syncing."
                             return@GoldButton
                         }
-                        starting = true
-                        scope.launch {
-                            try {
-                                host.session = appState.workouts.start(battle.exercise, battle.id, dashboard?.rules)
-                            } catch (e: Exception) {
-                                error = e.message
-                                runCatching { appState.battles.load() }
-                            } finally { starting = false }
+                        // The run is only registered at GO, once both players meet in the arena.
+                        try {
+                            host.session = appState.workouts.prepare(battle.exercise, battle.id, dashboard?.rules)
+                        } catch (e: Exception) {
+                            error = e.message
                         }
                     }
                     Text(

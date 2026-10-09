@@ -111,7 +111,7 @@ fun WorkoutFlowScreen(session: ActiveSession, appState: AppState, onClose: () ->
     }
     AnimatedContent(phase, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) }, label = "flow") { p ->
         when (p) {
-            0 -> ArenaScreen(session, appState) { reps, blocks, reason ->
+            0 -> ArenaScreen(session, appState, onLeave = onClose) { reps, blocks, reason ->
                 if (reps == 0 && !session.isBattle) {
                     appState.workouts.abandon(session.id)
                     onClose()

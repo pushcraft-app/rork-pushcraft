@@ -52,9 +52,14 @@ struct WorkoutFlowView: View {
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
-                ArenaView(session: session, workouts: appState.workouts) { reps, blocks, reason in
-                    handleEnd(reps: reps, blocks: blocks, reason: reason)
-                }
+                ArenaView(
+                    session: session,
+                    workouts: appState.workouts,
+                    onEnd: { reps, blocks, reason in
+                        handleEnd(reps: reps, blocks: blocks, reason: reason)
+                    },
+                    onLeave: { dismiss() }
+                )
                 .transition(.opacity)
             }
         }

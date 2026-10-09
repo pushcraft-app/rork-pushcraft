@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -73,6 +75,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.rork.pushcraftandroid.R
 import com.rork.pushcraftandroid.data.AppPreferences
@@ -101,6 +104,7 @@ import com.rork.pushcraftandroid.ui.theme.Pc
 import com.rork.pushcraftandroid.ui.theme.rounded
 import com.rork.pushcraftandroid.ui.theme.serif
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Duration
 import java.time.Instant
 
@@ -215,11 +219,22 @@ fun CameraMessageCard(status: CameraStatus) {
  * score for exactly the battle duration from the registered start.
  */
 @Composable
-fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, blocks: Int, reason: WorkoutEndReason) -> Unit) {
+fun ArenaScreen(
+    session: ActiveSession,
+    appState: AppState,
+    onLeave: () -> Unit = {},
+    onEnd: (reps: Int, blocks: Int, reason: WorkoutEndReason) -> Unit
+) {
     KeepScreenOn()
     val engine = remember { GameEngine(session.exercise) }
     val live = remember { BattleLiveSync() }
     val opponentReps by live.opponentReps.collectAsState()
+    val liveConnected by live.isConnected.collectAsState()
+    val startAnchor by live.startAnchor.collectAsState()
+    var battleStage by remember { mutableIntStateOf(STAGE_WAITING) }
+    var isRegistered by remember { mutableStateOf(false) }
+    var registrationError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     var hasEnded by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
     var countdown by remember { mutableStateOf<Int?>(null) }
@@ -231,25 +246,43 @@ fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, b
     val battle = session.battleId?.let { id -> battles.firstOrNull { it.id == id } }
     val dashboard by appState.progress.dashboard.collectAsState()
 
+    fun checkpoint() {
+        if (session.isBattle && !isRegistered) return
+        appState.workouts.checkpoint(session.id, engine.reps, engine.smashCount)
+    }
+
+    fun leaveBeforeStart() {
+        if (hasEnded || battleStage == STAGE_LIVE) return
+        Haptics.tap()
+        hasEnded = true
+        engine.isAcceptingReps = false
+        live.disconnect()
+        onLeave()
+    }
+
     fun end(reason: WorkoutEndReason) {
         if (hasEnded) return
         if (!session.isBattle) AppPreferences.hasSeenProgressTip = true
         engine.isAcceptingReps = false
-        appState.workouts.checkpoint(session.id, engine.reps, engine.smashCount)
+        checkpoint()
         hasEnded = true
         onEnd(engine.reps, engine.smashCount, reason)
     }
 
     DisposableEffect(Unit) {
         engine.onRep = {
-            appState.workouts.checkpoint(session.id, engine.reps, engine.smashCount)
-            live.send(engine.reps)
+            checkpoint()
+            live.update(engine.reps)
         }
-        session.battleId?.let { live.connect(it) }
-        engine.isAcceptingReps = session.isBattle
+        session.battleId?.let {
+            live.connect(it, isHost = battle?.isHost ?: false, battleDuration = session.battleDurationSeconds)
+            if (battle?.opponentSubmitted == true) live.beginSolo()
+        }
+        // Reps only count after GO; the camera warms up during waiting/countdown.
+        engine.isAcceptingReps = false
         engine.start()
         onDispose {
-            if (!hasEnded) appState.workouts.checkpoint(session.id, engine.reps, engine.smashCount)
+            if (!hasEnded) checkpoint()
             live.disconnect()
             engine.dispose()
         }
@@ -282,37 +315,91 @@ fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, b
     LaunchedEffect(Unit) {
         while (!hasEnded) {
             delay(4000)
-            if (!hasEnded) {
-                appState.workouts.checkpoint(session.id, engine.reps, engine.smashCount)
-                live.send(engine.reps)
-            }
+            if (!hasEnded) checkpoint()
         }
     }
+    // Battle: waiting → shared 5-4-3-2-1 → GO (registers the run) → timer → end.
+    // Both phones derive every step from the same start anchor.
     LaunchedEffect(Unit) {
         if (!session.isBattle) return@LaunchedEffect
+        val countdownMs = BattleLiveSync.COUNTDOWN_MS
+        val durationMs = session.battleDurationSeconds * 1000L
+        var lastTick: Int? = null
         while (!hasEnded) {
-            val elapsed = Duration.between(session.startedAt, Instant.now()).toMillis() / 1000.0
-            val left = maxOf(0.0, session.battleDurationSeconds - elapsed)
-            remaining = Math.ceil(left).toInt()
-            if (left <= 0) {
-                engine.isAcceptingReps = false
-                end(WorkoutEndReason.Timer)
-                return@LaunchedEffect
+            val anchor = live.startAnchor.value
+            if (anchor == null) { delay(100); continue }
+            val elapsed = System.currentTimeMillis() - anchor
+            if (elapsed < countdownMs) {
+                battleStage = STAGE_COUNTDOWN
+                val tick = Math.ceil((countdownMs - elapsed) / 1000.0).toInt()
+                if (tick != lastTick) {
+                    lastTick = tick
+                    countdown = tick
+                    SoundService.play(SoundService.Effect.Drop, 1.5f, 0.8f)
+                    Haptics.tick()
+                }
+            } else {
+                if (battleStage != STAGE_LIVE) {
+                    battleStage = STAGE_LIVE
+                    countdown = null
+                    engine.isAcceptingReps = true
+                    live.update(engine.reps)
+                    scope.launch {
+                        while (!hasEnded && !isRegistered) {
+                            try {
+                                appState.workouts.register(session)
+                                isRegistered = true
+                                checkpoint()
+                                android.util.Log.i("Arena", "Battle run registered at GO")
+                            } catch (e: com.rork.pushcraftandroid.data.WorkoutException) {
+                                if (e.kind == com.rork.pushcraftandroid.data.WorkoutException.Kind.Offline ||
+                                    e.kind == com.rork.pushcraftandroid.data.WorkoutException.Kind.Server
+                                ) {
+                                    android.util.Log.w("Arena", "Registering battle run failed, retrying")
+                                    delay(2000)
+                                } else {
+                                    engine.isAcceptingReps = false
+                                    registrationError = e.message
+                                    return@launch
+                                }
+                            }
+                        }
+                    }
+                    if (elapsed < countdownMs + 1000) {
+                        scope.launch {
+                            showGo = true
+                            SoundService.play(SoundService.Effect.Hit, 1.25f)
+                            Haptics.success()
+                            delay(800)
+                            showGo = false
+                        }
+                    }
+                }
+                val left = maxOf(0L, durationMs - (elapsed - countdownMs))
+                remaining = Math.ceil(left / 1000.0).toInt()
+                if (left <= 0L) {
+                    engine.isAcceptingReps = false
+                    if (isRegistered) {
+                        end(WorkoutEndReason.Timer)
+                        return@LaunchedEffect
+                    }
+                }
             }
-            delay(250)
+            delay(100)
         }
     }
     LaunchedEffect(isComplete) { if (isComplete && !session.isBattle) Haptics.smash() }
 
     BackHandler {
-        if (session.isBattle) confirmEnd = true
+        if (session.isBattle && battleStage != STAGE_LIVE) leaveBeforeStart()
+        else if (session.isBattle) confirmEnd = true
         else if (engine.reps == 0) end(WorkoutEndReason.Finished) else confirmEnd = true
     }
 
     ArenaBackdrop(engine) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!session.isBattle) {
+            if (!session.isBattle) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                run {
                     Row(
                         Modifier.height(40.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
                             .pressScale { if (engine.reps == 0) end(WorkoutEndReason.Finished) else confirmEnd = true }
@@ -324,7 +411,7 @@ fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, b
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                if (session.isBattle) BattleTimer(remaining) else TargetPill(engine.reps, session.completionReps, isComplete)
+                TargetPill(engine.reps, session.completionReps, isComplete)
             }
             AnimatedVisibility(showTip, enter = slideInVertically() + fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 Row(
@@ -340,7 +427,8 @@ fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, b
                     myReps = engine.reps, opponentReps = opponentReps,
                     myName = dashboard?.profile?.displayName.orEmpty(), myAvatar = dashboard?.profile?.avatarPath,
                     opponentName = battle?.opponentName, opponentAvatar = battle?.opponentAvatarPath,
-                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 10.dp)
+                    remaining = remaining,
+                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = 6.dp)
                 )
             } else {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 10.dp)) {
@@ -361,8 +449,38 @@ fun ArenaScreen(session: ActiveSession, appState: AppState, onEnd: (reps: Int, b
                 CueView(engine.cue, engine.exercise)
             }
         }
+        if (session.isBattle && battleStage == STAGE_WAITING) {
+            BattleWaitingOverlay(
+                myName = dashboard?.profile?.displayName.orEmpty(), myAvatar = dashboard?.profile?.avatarPath,
+                opponentName = battle?.opponentName, opponentAvatar = battle?.opponentAvatarPath,
+                isConnected = liveConnected, onLeave = ::leaveBeforeStart
+            )
+        }
         if (countdown != null || showGo) CountdownOverlay(countdown, showGo)
+        if (session.isBattle && battleStage == STAGE_COUNTDOWN) {
+            Box(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 40.dp), contentAlignment = Alignment.BottomCenter) {
+                Box(
+                    Modifier.height(44.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                        .pressScale { leaveBeforeStart() }.padding(horizontal = 26.dp),
+                    contentAlignment = Alignment.Center
+                ) { Text("Leave", style = rounded(15, FontWeight.Bold), color = Color.White) }
+            }
+        }
         CameraMessageCard(engine.cameraStatus)
+    }
+
+    registrationError?.let { msg ->
+        AlertDialog(
+            onDismissRequest = {},
+            containerColor = Pc.towersNavy,
+            title = { Text("Couldn't start your run", style = rounded(19, FontWeight.Bold), color = Pc.ivory) },
+            text = { Text(msg, style = rounded(15, FontWeight.Medium), color = Pc.mist) },
+            confirmButton = {
+                TextButton({ registrationError = null; hasEnded = true; live.disconnect(); onLeave() }) {
+                    Text("OK", color = Pc.amberSoft, style = rounded(15, FontWeight.Bold))
+                }
+            }
+        )
     }
 
     if (confirmEnd) {
@@ -405,46 +523,99 @@ private fun TargetPill(reps: Int, target: Int, complete: Boolean) {
     }
 }
 
-@Composable
-private fun BattleTimer(remaining: Int) {
-    val low = remaining <= 10
-    val colors = if (low) listOf(Color(0xFFFF8A8A), Color(0xFFE04848)) else listOf(Pc.amberSoft, Pc.amberDeep)
-    Row(
-        Modifier.height(40.dp).shadow(10.dp, CircleShape, ambientColor = colors[1], spotColor = colors[1])
-            .background(Brush.verticalGradient(colors), CircleShape).padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)
-    ) {
-        val ink = if (low) Color(0xFF3A0A0A) else Pc.buttonInk
-        Icon(Icons.Filled.Timer, null, tint = ink, modifier = Modifier.size(16.dp))
-        Text("%d:%02d".format(remaining / 60, remaining % 60), style = rounded(17, FontWeight.ExtraBold), color = ink)
-    }
-}
+private const val STAGE_WAITING = 0
+private const val STAGE_COUNTDOWN = 1
+private const val STAGE_LIVE = 2
 
-/** Battle header: both players with live reps and a tug-of-war gauge. */
+private val OpponentRed = Color(0xFFFF5A5A)
+
+/** Battle header: photos with names, the match clock in the middle, and a gauge flanked by live reps. */
 @Composable
-private fun VersusHeader(myReps: Int, opponentReps: Int, myName: String, myAvatar: String?, opponentName: String?, opponentAvatar: String?, modifier: Modifier = Modifier) {
+private fun VersusHeader(
+    myReps: Int, opponentReps: Int, myName: String, myAvatar: String?,
+    opponentName: String?, opponentAvatar: String?, remaining: Int, modifier: Modifier = Modifier
+) {
     val myColor = Pc.cyan
-    val oppColor = Color(0xFFFF5A5A)
     val total = myReps + opponentReps
     val share by animateFloatAsState(if (total == 0) 0.5f else myReps.toFloat() / total, label = "share")
+    val low = remaining <= 10
     Column(
         modifier.fillMaxWidth().shadow(10.dp, RoundedCornerShape(22.dp)).background(Pc.panel, RoundedCornerShape(22.dp))
             .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BattleAvatar(myName, myAvatar, 44.dp, Modifier.border(2.5.dp, myColor, CircleShape))
-            Spacer(Modifier.width(8.dp))
-            Text("$myReps", style = rounded(24, FontWeight.Black), color = Color.White)
+        Row(verticalAlignment = Alignment.Top) {
+            VersusPlayer(myName, myAvatar, myColor)
             Spacer(Modifier.weight(1f))
-            Text("VS", style = rounded(14, FontWeight.Black, 1.5f), color = Color.White.copy(alpha = 0.55f))
+            Text(
+                "%d:%02d".format(remaining / 60, remaining % 60),
+                style = rounded(34, FontWeight.Black), color = if (low) OpponentRed else Color.White,
+                modifier = Modifier.padding(top = 14.dp)
+            )
             Spacer(Modifier.weight(1f))
-            Text("$opponentReps", style = rounded(24, FontWeight.Black), color = Color.White)
-            Spacer(Modifier.width(8.dp))
-            BattleAvatar(opponentName ?: "Waiting…", opponentAvatar, 44.dp, Modifier.border(2.5.dp, oppColor, CircleShape))
+            VersusPlayer(opponentName ?: "Opponent", opponentAvatar, OpponentRed)
         }
-        BoxWithConstraints(Modifier.fillMaxWidth().height(12.dp).background(Brush.horizontalGradient(listOf(oppColor, oppColor.copy(alpha = 0.7f))), CircleShape).border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)) {
-            Box(Modifier.height(12.dp).width(maxOf(maxWidth * share, 12.dp)).background(Brush.horizontalGradient(listOf(myColor.copy(alpha = 0.7f), myColor)), CircleShape))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("$myReps", style = rounded(24, FontWeight.Black), color = Color.White, modifier = Modifier.widthIn(min = 34.dp))
+            BoxWithConstraints(
+                Modifier.weight(1f).height(12.dp).background(Brush.horizontalGradient(listOf(OpponentRed, OpponentRed.copy(alpha = 0.7f))), CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+            ) {
+                Box(Modifier.height(12.dp).width(maxOf(maxWidth * share, 12.dp)).background(Brush.horizontalGradient(listOf(myColor.copy(alpha = 0.7f), myColor)), CircleShape))
+            }
+            Text("$opponentReps", style = rounded(24, FontWeight.Black), color = Color.White, textAlign = TextAlign.End, modifier = Modifier.widthIn(min = 34.dp))
+        }
+    }
+}
+
+@Composable
+private fun VersusPlayer(name: String, avatar: String?, ring: Color, size: Int = 64, nameWidth: Int = 92) {
+    Column(Modifier.width(nameWidth.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        BattleAvatar(name, avatar, size.dp, Modifier.border(3.dp, ring, CircleShape))
+        Text(name, style = rounded(13, FontWeight.Bold), color = Color.White.copy(alpha = 0.9f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Before a battle starts: both players, a live/connecting pill and a Leave button. */
+@Composable
+private fun BattleWaitingOverlay(
+    myName: String, myAvatar: String?, opponentName: String?, opponentAvatar: String?,
+    isConnected: Boolean, onLeave: () -> Unit
+) {
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "wait").animateFloat(
+        0.3f, 1f, androidx.compose.animation.core.infiniteRepeatable(tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "p"
+    )
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.62f))) {
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(26.dp)
+        ) {
+            Spacer(Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                VersusPlayer(myName, myAvatar, Pc.cyan, 84, 104)
+                Text("VS", style = rounded(20, FontWeight.Black, 2f), color = Color.White.copy(alpha = 0.6f))
+                Box(Modifier.alpha(0.55f + 0.4f * pulse)) { VersusPlayer(opponentName ?: "Opponent", opponentAvatar, OpponentRed, 84, 104) }
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Waiting for ${opponentName ?: "your friend"}…", style = rounded(22, FontWeight.ExtraBold), color = Color.White, textAlign = TextAlign.Center, maxLines = 2)
+                Text(
+                    if (isConnected) "The battle starts with a 5-second countdown as soon as they open it." else "Connecting to the battle…",
+                    style = rounded(15, FontWeight.Medium), color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center
+                )
+            }
+            Row(
+                Modifier.background(Pc.panel, CircleShape).padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(Modifier.size(8.dp).alpha(pulse).background(if (isConnected) Color(0xFF3DDC84) else Pc.amberSoft, CircleShape))
+                Text(if (isConnected) "LIVE" else "CONNECTING", style = rounded(12, FontWeight.ExtraBold, 1.5f), color = Color.White.copy(alpha = 0.75f))
+            }
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier.fillMaxWidth().height(50.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape).pressScale(onClick = onLeave),
+                contentAlignment = Alignment.Center
+            ) { Text("Leave", style = rounded(16, FontWeight.Bold), color = Color.White) }
+            Text("Leaving now doesn't use up your run.", style = rounded(13, FontWeight.Medium), color = Color.White.copy(alpha = 0.55f), modifier = Modifier.padding(bottom = 24.dp))
         }
     }
 }

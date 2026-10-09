@@ -82,14 +82,38 @@ final class WorkoutService {
     /// reply was lost reuses its saved session ID, so the single run per
     /// battle is never burned by a network hiccup.
     func start(exercise: Exercise, battleID: UUID?, rules: RulesDTO?) async throws -> ActiveSession {
+        let session = try prepare(exercise: exercise, battleID: battleID, rules: rules)
+        return try await register(session)
+    }
+
+    /// Builds a battle run without telling the server yet, so the player can
+    /// wait for their friend and leave without using up their single run.
+    /// Reuses the session ID of a run whose start reply was lost.
+    func prepare(exercise: Exercise, battleID: UUID?, rules: RulesDTO?) throws -> ActiveSession {
+        guard userID != nil else { throw WorkoutError.signedOut }
+        let existing = battleID.flatMap { id in pending.first { $0.battleID == id && $0.state == .registering } }
+        return ActiveSession(
+            id: existing?.id ?? UUID(),
+            exercise: exercise,
+            battleID: battleID,
+            startedAt: Date(),
+            completionReps: rules?.completionReps ?? 30,
+            battleDurationSeconds: rules?.battleDurationSeconds ?? 60
+        )
+    }
+
+    /// Registers a prepared run with the server. For battles this happens at GO.
+    func register(_ session: ActiveSession) async throws -> ActiveSession {
         guard let userID else { throw WorkoutError.signedOut }
+        let exercise = session.exercise
+        let battleID = session.battleID
 
         var record: PendingSession
-        if let battleID, let existing = pending.first(where: { $0.battleID == battleID && $0.state == .registering }) {
+        if let existing = pending.first(where: { $0.id == session.id && $0.state == .registering }) {
             record = existing
         } else {
             record = PendingSession(
-                id: UUID(),
+                id: session.id,
                 userID: userID,
                 exercise: exercise.serverValue,
                 battleID: battleID,
@@ -134,8 +158,8 @@ final class WorkoutService {
                 exercise: Exercise(serverValue: response.exercise) ?? exercise,
                 battleID: battleID,
                 startedAt: startedAt,
-                completionReps: rules?.completionReps ?? 30,
-                battleDurationSeconds: rules?.battleDurationSeconds ?? 60
+                completionReps: session.completionReps,
+                battleDurationSeconds: session.battleDurationSeconds
             )
         } catch {
             let failure = WorkoutError.from(error)

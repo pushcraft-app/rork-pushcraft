@@ -104,13 +104,36 @@ class WorkoutService(private val context: Context) {
 
     fun pendingRun(battleId: String): PendingSession? = _pending.value.firstOrNull { it.battleId == battleId }
 
-    suspend fun start(exercise: Exercise, battleId: String?, rules: RulesDTO?): ActiveSession {
+    suspend fun start(exercise: Exercise, battleId: String?, rules: RulesDTO?): ActiveSession =
+        register(prepare(exercise, battleId, rules))
+
+    /**
+     * Builds a battle run without telling the server yet, so the player can wait
+     * for their friend and leave without using up their single run. Reuses the
+     * session ID of a run whose start reply was lost.
+     */
+    fun prepare(exercise: Exercise, battleId: String?, rules: RulesDTO?): ActiveSession {
+        if (userId == null) throw WorkoutException(WorkoutException.Kind.SignedOut)
+        val existing = battleId?.let { b -> _pending.value.firstOrNull { it.battleId == b && it.state == PendingSession.REGISTERING } }
+        return ActiveSession(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            exercise = exercise,
+            battleId = battleId,
+            startedAt = Instant.now(),
+            completionReps = rules?.completionReps ?: 30,
+            battleDurationSeconds = rules?.battleDurationSeconds ?: 60
+        )
+    }
+
+    /** Registers a prepared run with the server. For battles this happens at GO. */
+    suspend fun register(session: ActiveSession): ActiveSession {
         val uid = userId ?: throw WorkoutException(WorkoutException.Kind.SignedOut)
+        val exercise = session.exercise
+        val battleId = session.battleId
         val now = System.currentTimeMillis()
-        var record = battleId?.let { b ->
-            _pending.value.firstOrNull { it.battleId == b && it.state == PendingSession.REGISTERING }
-        } ?: PendingSession(
-            id = UUID.randomUUID().toString(), userId = uid, exercise = exercise.serverValue, battleId = battleId,
+        var record = _pending.value.firstOrNull { it.id == session.id && it.state == PendingSession.REGISTERING }
+            ?: PendingSession(
+            id = session.id, userId = uid, exercise = exercise.serverValue, battleId = battleId,
             createdAt = now, state = PendingSession.REGISTERING, updatedAt = now
         ).also { upsert(it) }
 
@@ -135,8 +158,8 @@ class WorkoutService(private val context: Context) {
                 exercise = Exercise.fromServer(response.exercise) ?: exercise,
                 battleId = battleId,
                 startedAt = Instant.ofEpochMilli(started),
-                completionReps = rules?.completionReps ?: 30,
-                battleDurationSeconds = rules?.battleDurationSeconds ?: 60
+                completionReps = session.completionReps,
+                battleDurationSeconds = session.battleDurationSeconds
             )
         } catch (e: Exception) {
             val failure = WorkoutException.from(e)

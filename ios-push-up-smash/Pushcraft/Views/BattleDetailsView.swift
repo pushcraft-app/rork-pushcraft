@@ -257,19 +257,16 @@ struct BattleDetailsView: View {
             errorMessage = "Your run for this battle is already saved and is syncing."
             return
         }
-        isStarting = true
-        Task {
-            defer { isStarting = false }
-            do {
-                activeSession = try await appState.workouts.start(
-                    exercise: battle.exercise,
-                    battleID: battle.id,
-                    rules: appState.progress.rules
-                )
-            } catch {
-                errorMessage = (error as? LocalizedError)?.errorDescription
-                try? await appState.battles.load()
-            }
+        // The run is only registered with the server at GO, after both
+        // players have met in the arena, so opening it here is free.
+        do {
+            activeSession = try appState.workouts.prepare(
+                exercise: battle.exercise,
+                battleID: battle.id,
+                rules: appState.progress.rules
+            )
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription
         }
     }
 

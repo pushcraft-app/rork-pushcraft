@@ -4,10 +4,16 @@ import UIKit
 /// Live camera + skeleton, the floating block, counters and depth meter.
 /// Runs one registered workout: checkpoints every rep to disk, shows the
 /// "Completed" banner at the target, and for battles stops scoring at 60 s.
+///
+/// Battles open on a waiting screen. Once both phones meet on the battle's
+/// live channel they run the same 5-second countdown, the run is registered
+/// with the server at GO, and both 60-second clocks run from that moment.
 struct ArenaView: View {
     let session: ActiveSession
     let workouts: WorkoutService
     var onEnd: (_ reps: Int, _ blocks: Int, _ reason: WorkoutEndReason) -> Void
+    /// Leaves a battle before GO without using up the run.
+    var onLeave: () -> Void = {}
 
     @Environment(AppState.self) private var appState
 
@@ -20,12 +26,25 @@ struct ArenaView: View {
     @State private var showGo = false
     @State private var sound = SoundService()
     @State private var liveSync = BattleLiveSync()
+    @State private var battleStage: BattleStage = .waiting
+    @State private var isRegistered = false
+    @State private var registrationError: String?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(session: ActiveSession, workouts: WorkoutService, onEnd: @escaping (Int, Int, WorkoutEndReason) -> Void) {
+    private enum BattleStage {
+        case waiting, countdown, live
+    }
+
+    init(
+        session: ActiveSession,
+        workouts: WorkoutService,
+        onEnd: @escaping (Int, Int, WorkoutEndReason) -> Void,
+        onLeave: @escaping () -> Void = {}
+    ) {
         self.session = session
         self.workouts = workouts
         self.onEnd = onEnd
+        self.onLeave = onLeave
         _engine = State(initialValue: GameEngine(exercise: session.exercise))
         _remainingSeconds = State(initialValue: session.battleDurationSeconds)
     }
@@ -64,9 +83,38 @@ struct ArenaView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            if session.isBattle && battleStage == .waiting {
+                BattleWaitingOverlay(
+                    myName: appState.progress.displayName,
+                    myAvatarPath: appState.progress.dashboard?.profile.avatarPath,
+                    opponentName: battle?.opponentName,
+                    opponentAvatarPath: battle?.opponentAvatarPath,
+                    isConnected: liveSync.isConnected,
+                    onLeave: leaveBeforeStart
+                )
+                .transition(.opacity)
+            }
+
             if countdownRemaining != nil || showGo {
                 StartCountdownOverlay(count: countdownRemaining, isGo: showGo)
                     .allowsHitTesting(false)
+            }
+
+            if session.isBattle && battleStage == .countdown {
+                VStack {
+                    Spacer()
+                    Button(action: leaveBeforeStart) {
+                        Text("Leave")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 26)
+                            .frame(height: 44)
+                            .background(Theme.panel, in: .capsule)
+                            .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .padding(.bottom, 40)
+                }
             }
 
             if let message = cameraMessage {
@@ -80,15 +128,22 @@ struct ArenaView: View {
             engine.onRep = { [weak engine] in
                 guard let engine else { return }
                 workouts.checkpoint(id: session.id, reps: engine.reps, blocks: engine.smashCount)
-                liveSync.send(reps: engine.reps)
+                liveSync.update(reps: engine.reps)
             }
             if let battleID = session.battleID {
-                liveSync.connect(battleID: battleID)
+                liveSync.connect(
+                    battleID: battleID,
+                    isHost: battle?.isHost ?? false,
+                    battleDuration: session.battleDurationSeconds
+                )
+                // Opponent already played their run: nobody to wait for.
+                if battle?.opponentSubmitted == true {
+                    liveSync.beginSolo()
+                }
             }
-            // Regular workouts wait for the countdown; battles score right
-            // away because their clock is already running from the registered
-            // start. The camera and calibration still run either way.
-            engine.isAcceptingReps = session.isBattle
+            // Reps only count after GO. The camera warms up and calibrates
+            // during the countdown (and the battle waiting screen).
+            engine.isAcceptingReps = false
             engine.start()
             showFirstSessionTipIfNeeded()
         }
@@ -109,6 +164,19 @@ struct ArenaView: View {
         .task { await heartbeat() }
         .task { await runBattleTimer() }
         .task { await runCountdown() }
+        .alert(
+            "Couldn't start your run",
+            isPresented: Binding(get: { registrationError != nil }, set: { _ in })
+        ) {
+            Button("OK", role: .cancel) {
+                registrationError = nil
+                hasEnded = true
+                engine.stop()
+                onLeave()
+            }
+        } message: {
+            Text(registrationError ?? "")
+        }
         .onChange(of: isComplete) { _, complete in
             if complete && !session.isBattle {
                 HapticService().smash()
@@ -155,29 +223,101 @@ struct ArenaView: View {
         while !Task.isCancelled && !hasEnded {
             try? await Task.sleep(for: .seconds(4))
             checkpoint()
-            liveSync.send(reps: engine.reps)
         }
     }
 
-    /// Battle runs score for exactly the battle duration, measured from the
-    /// registered start, then end automatically.
+    /// Drives a battle from the shared start moment: waiting → 5-4-3-2-1 →
+    /// GO (registers the run) → exactly the battle duration → end. Both
+    /// phones derive every step from the same anchor, so they stay in step.
     private func runBattleTimer() async {
         guard session.isBattle else { return }
+        let countdown = BattleLiveSync.countdownSeconds
+        let duration = Double(session.battleDurationSeconds)
+        var lastTick: Int?
+
         while !Task.isCancelled && !hasEnded {
-            let elapsed = Date().timeIntervalSince(session.startedAt)
-            let remaining = max(0, Double(session.battleDurationSeconds) - elapsed)
-            remainingSeconds = Int(remaining.rounded(.up))
-            if remaining <= 0 {
-                engine.isAcceptingReps = false
-                end(.timer)
-                return
+            guard let anchor = liveSync.startAnchor else {
+                try? await Task.sleep(for: .milliseconds(100))
+                continue
             }
-            try? await Task.sleep(for: .milliseconds(250))
+            let elapsed = Date().timeIntervalSince(anchor)
+
+            if elapsed < countdown {
+                if battleStage == .waiting {
+                    withAnimation(.easeOut(duration: 0.25)) { battleStage = .countdown }
+                }
+                let tick = Int((countdown - elapsed).rounded(.up))
+                if tick != lastTick {
+                    lastTick = tick
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { countdownRemaining = tick }
+                    sound.play(.drop, pitch: 1.5, volume: 0.8)
+                    HapticService.ui.tick()
+                }
+            } else {
+                if battleStage != .live {
+                    battleStage = .live
+                    countdownRemaining = nil
+                    engine.isAcceptingReps = true
+                    liveSync.update(reps: engine.reps)
+                    Task { await registerRun() }
+                    if elapsed < countdown + 1 {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { showGo = true }
+                        sound.play(.hit, pitch: 1.25, volume: 1)
+                        HapticService.ui.success()
+                        Task {
+                            try? await Task.sleep(for: .seconds(0.8))
+                            withAnimation(.easeOut(duration: 0.3)) { showGo = false }
+                        }
+                    }
+                }
+                let remaining = max(0, duration - (elapsed - countdown))
+                remainingSeconds = Int(remaining.rounded(.up))
+                if remaining <= 0 {
+                    engine.isAcceptingReps = false
+                    // The score can only be saved once the run is registered.
+                    if isRegistered {
+                        end(.timer)
+                        return
+                    }
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    /// Registers the battle run at GO. Network hiccups retry every 2 seconds
+    /// (reusing the same session ID); a definitive refusal leaves the arena.
+    private func registerRun() async {
+        while !hasEnded && !isRegistered {
+            do {
+                _ = try await workouts.register(session)
+                isRegistered = true
+                checkpoint()
+                print("[Arena] Battle run registered at GO")
+            } catch let error as WorkoutError where error != .offline && error != .server {
+                engine.isAcceptingReps = false
+                registrationError = error.errorDescription
+                return
+            } catch {
+                print("[Arena] Registering battle run failed, retrying: \(error.localizedDescription)")
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    /// Leaves a battle before GO. Nothing was registered, so the run is kept.
+    private func leaveBeforeStart() {
+        guard !hasEnded, battleStage != .live else { return }
+        HapticService.ui.tap()
+        hasEnded = true
+        engine.isAcceptingReps = false
+        engine.stop()
+        liveSync.disconnect()
+        onLeave()
     }
 
     private func checkpoint() {
-        guard !hasEnded else { return }
+        guard !hasEnded, !session.isBattle || isRegistered else { return }
         workouts.checkpoint(id: session.id, reps: engine.reps, blocks: engine.smashCount)
     }
 
@@ -244,9 +384,11 @@ struct ArenaView: View {
 
     private var hud: some View {
         VStack(spacing: 0) {
-            topBar
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
+            if !session.isBattle {
+                topBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+            }
 
             if showProgressTip {
                 progressTip
@@ -261,10 +403,11 @@ struct ArenaView: View {
                     myName: appState.progress.displayName,
                     myAvatarPath: appState.progress.dashboard?.profile.avatarPath,
                     opponentName: battle?.opponentName,
-                    opponentAvatarPath: battle?.opponentAvatarPath
+                    opponentAvatarPath: battle?.opponentAvatarPath,
+                    remainingSeconds: remainingSeconds
                 )
                 .padding(.horizontal, 16)
-                .padding(.top, 10)
+                .padding(.top, 6)
             } else {
                 HStack(alignment: .top) {
                     StatCard(value: engine.reps, label: "REPS", tint: Theme.cyan) {
@@ -336,11 +479,7 @@ struct ArenaView: View {
 
             Spacer(minLength: 8)
 
-            if session.isBattle {
-                battleTimer
-            } else {
-                targetPill
-            }
+            targetPill
         }
     }
 
@@ -370,32 +509,6 @@ struct ArenaView: View {
         .overlay { Capsule().strokeBorder(.white.opacity(isComplete ? 0 : 0.22), lineWidth: 1) }
         .animation(.spring(response: 0.4, dampingFraction: 0.7), value: isComplete)
         .accessibilityLabel(isComplete ? "Workout completed. Keep going." : "\(engine.reps) of \(session.completionReps) reps")
-    }
-
-    private var battleTimer: some View {
-        let isLow = remainingSeconds <= 10
-        return HStack(spacing: 7) {
-            Image(systemName: "timer")
-                .font(.system(size: 14, weight: .bold))
-            Text(String(format: "%d:%02d", remainingSeconds / 60, remainingSeconds % 60))
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(.numericText(countsDown: true))
-                .animation(.snappy, value: remainingSeconds)
-        }
-        .foregroundStyle(isLow ? Color(hex: 0x3A0A0A) : Color(hex: 0x3A2200))
-        .padding(.horizontal, 14)
-        .frame(height: 40)
-        .background(
-            .linearGradient(
-                colors: isLow ? [Color(hex: 0xFF8A8A), Color(hex: 0xE04848)] : [Theme.amberSoft, Theme.amberDeep],
-                startPoint: .top,
-                endPoint: .bottom
-            ),
-            in: .capsule
-        )
-        .shadow(color: (isLow ? Color(hex: 0xE04848) : Theme.amberDeep).opacity(0.5), radius: 10)
-        .accessibilityLabel("\(remainingSeconds) seconds left")
     }
 
     private var blockStage: some View {
@@ -515,8 +628,8 @@ private struct PayoutText: View {
 // MARK: - Battle versus HUD
 
 /// Battle-only header: both players' photos ringed in their color (blue = you,
-/// red = opponent), live rep counts, and a tug-of-war gauge under the row —
-/// the divider slides toward whoever is doing more push-ups right now.
+/// red = opponent) with names underneath, the match clock in the middle, and a
+/// tug-of-war gauge flanked by each side's live rep count.
 private struct VersusHeader: View {
     let myReps: Int
     let opponentReps: Int
@@ -524,35 +637,30 @@ private struct VersusHeader: View {
     let myAvatarPath: String?
     let opponentName: String?
     let opponentAvatarPath: String?
+    let remainingSeconds: Int
 
     private static let myColor = Theme.cyan
     private static let opponentColor = Color(hex: 0xFF5A5A)
+    private static let lowColor = Color(hex: 0xFF5A5A)
 
     var body: some View {
         VStack(spacing: 10) {
-            HStack(alignment: .center) {
-                player(name: myName, reps: myReps, avatarPath: myAvatarPath, ring: Self.myColor, isLeading: true)
-
-                Spacer(minLength: 10)
-
-                Text("VS")
-                    .font(.system(size: 14, weight: .black, design: .rounded))
-                    .tracking(1.5)
-                    .foregroundStyle(.white.opacity(0.55))
-                    .shadow(color: .black.opacity(0.6), radius: 3)
-
-                Spacer(minLength: 10)
-
-                player(
-                    name: opponentName ?? "Waiting…",
-                    reps: opponentReps,
-                    avatarPath: opponentAvatarPath,
-                    ring: Self.opponentColor,
-                    isLeading: false
-                )
+            HStack(alignment: .top, spacing: 8) {
+                player(name: myName, avatarPath: myAvatarPath, ring: Self.myColor)
+                Spacer(minLength: 4)
+                clock
+                    .padding(.top, 14)
+                Spacer(minLength: 4)
+                player(name: opponentName ?? "Opponent", avatarPath: opponentAvatarPath, ring: Self.opponentColor)
             }
 
-            gauge
+            HStack(spacing: 10) {
+                repCount(myReps, color: Self.myColor)
+                    .frame(minWidth: 34, alignment: .leading)
+                gauge
+                repCount(opponentReps, color: Self.opponentColor)
+                    .frame(minWidth: 34, alignment: .trailing)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -564,16 +672,28 @@ private struct VersusHeader: View {
         .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
     }
 
-    private func player(name: String, reps: Int, avatarPath: String?, ring: Color, isLeading: Bool) -> some View {
-        HStack(spacing: 8) {
-            if !isLeading {
-                repCount(reps, color: ring)
-            }
+    private var clock: some View {
+        let isLow = remainingSeconds <= 10
+        return Text(String(format: "%d:%02d", remainingSeconds / 60, remainingSeconds % 60))
+            .font(.system(size: 34, weight: .black, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(isLow ? Self.lowColor : .white)
+            .shadow(color: (isLow ? Self.lowColor : .black).opacity(0.6), radius: isLow ? 8 : 3)
+            .contentTransition(.numericText(countsDown: true))
+            .animation(.snappy, value: remainingSeconds)
+            .accessibilityLabel("\(remainingSeconds) seconds left")
+    }
+
+    private func player(name: String, avatarPath: String?, ring: Color) -> some View {
+        VStack(spacing: 6) {
             VersusAvatar(name: name, avatarPath: avatarPath, ring: ring)
-            if isLeading {
-                repCount(reps, color: ring)
-            }
+            Text(name)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
+        .frame(width: 92)
     }
 
     private func repCount(_ reps: Int, color: Color) -> some View {
@@ -628,14 +748,114 @@ private struct VersusAvatar: View {
     let name: String?
     let avatarPath: String?
     let ring: Color
+    var size: CGFloat = 64
 
     var body: some View {
-        BattleAvatar(name: name, avatarPath: avatarPath, size: 44)
+        BattleAvatar(name: name, avatarPath: avatarPath, size: size)
             .overlay {
                 Circle()
-                    .strokeBorder(ring, lineWidth: 2.5)
-                    .shadow(color: ring.opacity(0.8), radius: 5)
+                    .strokeBorder(ring, lineWidth: 3)
+                    .shadow(color: ring.opacity(0.8), radius: 6)
             }
+    }
+}
+
+/// Shown before a battle starts: both players, a pulsing "waiting" line and a
+/// Leave button. The camera keeps warming up behind it.
+private struct BattleWaitingOverlay: View {
+    let myName: String
+    let myAvatarPath: String?
+    let opponentName: String?
+    let opponentAvatarPath: String?
+    let isConnected: Bool
+    var onLeave: () -> Void
+
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.62)
+                .ignoresSafeArea()
+
+            VStack(spacing: 26) {
+                Spacer()
+
+                HStack(spacing: 22) {
+                    side(name: myName, avatarPath: myAvatarPath, ring: Theme.cyan, dimmed: false)
+                    Text("VS")
+                        .font(.system(size: 20, weight: .black, design: .rounded))
+                        .tracking(2)
+                        .foregroundStyle(.white.opacity(0.6))
+                    side(name: opponentName ?? "Opponent", avatarPath: opponentAvatarPath, ring: Color(hex: 0xFF5A5A), dimmed: true)
+                }
+
+                VStack(spacing: 8) {
+                    Text("Waiting for \(opponentName ?? "your friend")…")
+                        .font(.system(size: 22, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                    Text(isConnected
+                         ? "The battle starts with a 5-second countdown as soon as they open it."
+                         : "Connecting to the battle…")
+                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 32)
+
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isConnected ? Color(hex: 0x3DDC84) : Theme.amberSoft)
+                        .frame(width: 8, height: 8)
+                        .opacity(pulse ? 1 : 0.3)
+                    Text(isConnected ? "Live" : "Connecting")
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                        .tracking(1.5)
+                        .foregroundStyle(.white.opacity(0.75))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Theme.panel, in: .capsule)
+
+                Spacer()
+
+                Button(action: onLeave) {
+                    Text("Leave")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(Theme.panel, in: .capsule)
+                        .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+                }
+                .buttonStyle(PressScaleStyle())
+                .padding(.horizontal, 32)
+
+                Text("Leaving now doesn't use up your run.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.bottom, 24)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+
+    private func side(name: String, avatarPath: String?, ring: Color, dimmed: Bool) -> some View {
+        VStack(spacing: 8) {
+            VersusAvatar(name: name, avatarPath: avatarPath, ring: ring, size: 84)
+                .opacity(dimmed ? (pulse ? 0.95 : 0.55) : 1)
+            Text(name)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 104)
+        }
     }
 }
 
