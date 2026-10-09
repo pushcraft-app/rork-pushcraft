@@ -7,8 +7,12 @@ struct CueView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            ChevronHint(cue: cue, exercise: exercise)
-                .frame(height: 26)
+            // Only the charge/smash cues animate chevrons; other cues skip
+            // the reserved row so the meter sits right above the capsule.
+            if showsChevrons {
+                ChevronHint(cue: cue, exercise: exercise)
+                    .frame(height: 26)
+            }
 
             VStack(spacing: 4) {
                 HStack(spacing: 8) {
@@ -42,6 +46,13 @@ struct CueView: View {
             .transition(.scale(scale: 0.85).combined(with: .opacity))
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: cue)
+    }
+
+    private var showsChevrons: Bool {
+        switch cue {
+        case .goDown, .smashIt: true
+        case .getInFrame, .holdTop, .smashed: false
+        }
     }
 }
 
