@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.rork.pushcraftandroid"
+    namespace = "com.tinochiwara.pushcraft"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.rork.pushcraftandroid"
+        applicationId = "com.tinochiwara.pushcraft"
         minSdk = 26
         targetSdk = 36
         versionCode = 1

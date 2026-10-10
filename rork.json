@@ -18,7 +18,10 @@
     {
       "name": "Pushcraft Android",
       "path": "android",
-      "framework": "kotlin"
+      "framework": "kotlin",
+      "settings": {
+        "androidPackage": "com.tinochiwara.pushcraft"
+      }
     }
   ]
 }
