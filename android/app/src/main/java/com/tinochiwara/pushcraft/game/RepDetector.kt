@@ -30,7 +30,7 @@ object PoseMapper {
     }
 }
 
-enum class RepPhase { Searching, Calibrating, Top, Charging, Charged }
+enum class RepPhase { Searching, Calibrating, NoArm, Top, Charging, Charged }
 
 data class RepTracking(val phase: RepPhase, val depth: Double, val calibration: Double) {
     companion object { val Initial = RepTracking(RepPhase.Searching, 0.0, 0.0) }
@@ -41,6 +41,16 @@ data class RepEvent(var repCompleted: Boolean = false, var justCharged: Boolean 
 /**
  * Turns poses into reps (direct port of the iOS RepDetector): neck anchor,
  * 1 s auto-calibration, hysteresis at 55 % / 25 % with a 0.35 s debounce.
+ *
+ * - Straight-arm check: push-up calibration can only complete when one arm's
+ *   chain (shoulder + elbow + wrist) is visible and near-straight, so holding
+ *   still at the bottom can never lock in a false "top". Collinearity survives
+ *   projection, so a foreshortened but straight arm still passes. Sit-ups skip
+ *   the check — lying flat IS their start position.
+ * - Readiness ([isReady]): a live flag for the pre-start countdown. Ready =
+ *   calibrated, near the top, and visible. Lost only by a clear lowering (past
+ *   50 % of the range for 0.3 s) or the full tracking-loss reset — never by
+ *   jitter or a brief flicker.
  */
 class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
     companion object {
@@ -50,6 +60,9 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
         const val CALIBRATION_DURATION = 1.0
         const val CALIBRATION_TOLERANCE = 0.035
         const val LOST_TIMEOUT = 2.5
+        const val STRAIGHT_ARM_ANGLE = 150.0
+        const val LOWERED_DEPTH = 0.5
+        const val LOWERED_SECONDS = 0.3
     }
 
     var state = RepTracking.Initial
@@ -72,6 +85,29 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
     private var peak = 0.0
     private var lastRep = Double.NEGATIVE_INFINITY
 
+    private var isLowered = false
+    private var lowerStart: Double? = null
+
+    /** Live readiness for the pre-start countdown: calibrated, near the top, body visible. */
+    var isReady: Boolean = false
+        private set
+
+    /** Keeps the calibration but forgets any charge and pending setup movement. Called at GO. */
+    fun clearCharge() {
+        isCharged = false
+        peak = 0.0
+    }
+
+    fun reset() {
+        filtered = null; top = null; range = 0.12; minRange = 0.08; noseToNeck = 0.07
+        lastSeen = Double.NEGATIVE_INFINITY
+        calibrationStart = null; calibrationMin = 0.0; calibrationMax = 0.0
+        calibrationSum = 0.0; calibrationCount = 0; spanSum = 0.0; spanCount = 0
+        isCharged = false; peak = 0.0; lastRep = Double.NEGATIVE_INFINITY
+        isLowered = false; lowerStart = null; isReady = false
+        state = RepTracking.Initial
+    }
+
     private val direction: Double get() = if (exercise == Exercise.SitUps) -1.0 else 1.0
 
     fun process(frame: PoseFrame, now: Double): RepEvent {
@@ -79,8 +115,7 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
         val raw = anchor(frame)
         if (raw == null) {
             if (now - lastSeen > LOST_TIMEOUT) {
-                filtered = null; top = null; isCharged = false; calibrationStart = null
-                state = RepTracking.Initial
+                reset()
             }
             return event
         }
@@ -120,9 +155,21 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
                 }
             }
         }
+        updateReadiness(depth, now)
         val phase = if (isCharged) RepPhase.Charged else if (depth > 0.08) RepPhase.Charging else RepPhase.Top
         state = RepTracking(phase, minOf(depth, 1.0), 1.0)
         return event
+    }
+
+    private fun updateReadiness(depth: Double, now: Double) {
+        if (depth >= LOWERED_DEPTH) {
+            if (lowerStart == null) lowerStart = now
+            if (now - lowerStart!! >= LOWERED_SECONDS) isLowered = true
+        } else {
+            lowerStart = null
+            if (depth <= UP_THRESHOLD) isLowered = false
+        }
+        isReady = top != null && !isLowered
     }
 
     private fun calibrate(y: Double, frame: PoseFrame, now: Double) {
@@ -141,6 +188,12 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
 
         val progress = minOf((now - (calibrationStart ?: now)) / CALIBRATION_DURATION, 1.0)
         if (progress >= 1 && calibrationCount > 0) {
+            // Push-ups may never calibrate on stillness alone: the start
+            // position must be verified straight-armed via one visible arm.
+            if (exercise == Exercise.PushUps && !hasStraightArm(frame)) {
+                state = RepTracking(RepPhase.NoArm, 0.0, progress)
+                return
+            }
             top = calibrationSum / calibrationCount
             val span = if (spanCount > 0) spanSum / spanCount else 0.2
             val factor = if (exercise == Exercise.SitUps) 0.85 else 0.55
@@ -149,11 +202,42 @@ class RepDetector(private val exercise: Exercise = Exercise.PushUps) {
             range = (span * factor).coerceIn(lo, hi)
             minRange = range * 0.8
             isCharged = false
+            isLowered = false
+            lowerStart = null
+            isReady = true
             calibrationStart = null
             state = RepTracking(RepPhase.Top, 0.0, 1.0)
         } else {
-            state = RepTracking(RepPhase.Calibrating, 0.0, progress)
+            val armsOK = exercise == Exercise.SitUps || hasStraightArm(frame)
+            state = RepTracking(if (armsOK) RepPhase.Calibrating else RepPhase.NoArm, 0.0, progress)
         }
+    }
+
+    /** True when either arm's shoulder-elbow-wrist chain is visible and near straight. */
+    private fun hasStraightArm(frame: PoseFrame): Boolean {
+        if (frame.imageSize.height <= 0f) return false
+        val aspect = (frame.imageSize.width / frame.imageSize.height).toDouble()
+        val j = frame.joints
+        listOf(
+            Triple(Joint.LeftShoulder, Joint.LeftElbow, Joint.LeftWrist),
+            Triple(Joint.RightShoulder, Joint.RightElbow, Joint.RightWrist)
+        ).forEach { (s, e, w) ->
+            val shoulder = j[s] ?: return@forEach
+            val elbow = j[e] ?: return@forEach
+            val wrist = j[w] ?: return@forEach
+            if (elbowAngle(shoulder, elbow, wrist, aspect) >= STRAIGHT_ARM_ANGLE) return true
+        }
+        return false
+    }
+
+    /** Interior elbow angle in degrees; x is rescaled by the image aspect for true angles. */
+    private fun elbowAngle(shoulder: Offset, elbow: Offset, wrist: Offset, aspect: Double): Double {
+        val ux = (shoulder.x - elbow.x) * aspect; val uy = (shoulder.y - elbow.y).toDouble()
+        val vx = (wrist.x - elbow.x) * aspect; val vy = (wrist.y - elbow.y).toDouble()
+        val dot = ux * vx + uy * vy
+        val magnitude = kotlin.math.sqrt(ux * ux + uy * uy) * kotlin.math.sqrt(vx * vx + vy * vy)
+        if (magnitude <= 1e-6) return 0.0
+        return Math.toDegrees(kotlin.math.acos((dot / magnitude).coerceIn(-1.0, 1.0)))
     }
 
     private fun learn(peak: Double) {

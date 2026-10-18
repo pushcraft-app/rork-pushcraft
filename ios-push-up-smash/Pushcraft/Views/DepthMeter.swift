@@ -2,14 +2,25 @@ import SwiftUI
 
 /// Charge bar: fills as the user goes down, drains as they push back up.
 /// Turns gold once the rep is "charged" (deep enough to count).
+///
+/// Before GO (`preStart`) it doubles as the readiness meter: white while
+/// calibrating, solid gold when READY, and it never shows charge depth —
+/// setup movements are not gameplay.
 struct DepthMeter: View {
     let tracking: RepTracking
+    var preStart: Bool = false
+    var isReady: Bool = false
 
     var body: some View {
         let isCalibrating = tracking.phase == .calibrating
+        let isNoArm = tracking.phase == .noArm
         let isCharged = tracking.phase == .charged
-        let fill = isCalibrating ? tracking.calibration : tracking.depth
-        let color: Color = isCalibrating ? .white : (isCharged ? Theme.gold : Theme.cyan)
+        let fill: CGFloat = preStart
+            ? (isReady ? 1 : (isCalibrating || isNoArm ? tracking.calibration : 0))
+            : (isCalibrating ? tracking.calibration : tracking.depth)
+        let color: Color = preStart
+            ? (isReady ? Theme.gold : .white)
+            : (isCalibrating || isNoArm ? .white : (isCharged ? Theme.gold : Theme.cyan))
 
         GeometryReader { proxy in
             let width = proxy.size.width
@@ -27,7 +38,7 @@ struct DepthMeter: View {
                     .frame(width: fill > 0.01 ? max(width * fill, proxy.size.height) : 0)
                     .shadow(color: color.opacity(0.9), radius: 10)
 
-                if !isCalibrating {
+                if !isCalibrating && !preStart {
                     Capsule()
                         .fill(.white.opacity(isCharged ? 0 : 0.5))
                         .frame(width: 3, height: proxy.size.height * 0.7)

@@ -51,7 +51,7 @@ struct CueView: View {
     private var showsChevrons: Bool {
         switch cue {
         case .goDown, .smashIt: true
-        case .getInFrame, .holdTop, .smashed: false
+        case .getInFrame, .holdTop, .adjustPhone, .smashed: false
         }
     }
 }

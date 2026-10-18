@@ -4,6 +4,8 @@ import SwiftUI
 enum CoachCue: Hashable {
     case getInFrame
     case holdTop
+    /// Still, but no arm chain is visible to verify the start position.
+    case adjustPhone
     case goDown
     case smashIt
     case smashed
@@ -15,7 +17,8 @@ enum CoachCue: Hashable {
     func title(for exercise: Exercise) -> String {
         switch self {
         case .getInFrame: "GET IN FRAME"
-        case .holdTop: "HOLD THE START"
+        case .holdTop: exercise == .sitUps ? "LIE FLAT — HOLD" : "ARMS STRAIGHT — HOLD"
+        case .adjustPhone: "SHOW ONE ARM"
         case .goDown: exercise == .sitUps ? "SIT UP TO CHARGE" : "GO DOWN TO CHARGE"
         case .smashIt: exercise == .sitUps ? "SIT UP — SMASH IT!" : "PUSH UP — SMASH IT!"
         case .smashed: "BLOCK SMASHED!"
@@ -31,7 +34,9 @@ enum CoachCue: Hashable {
         case .holdTop:
             exercise == .sitUps
                 ? "Lie flat, stay still — calibrating"
-                : "Arms straight, stay still — calibrating"
+                : "Hold the top position — calibrating"
+        case .adjustPhone:
+            "Adjust your phone so one arm is fully visible"
         case .goDown, .smashIt: nil
         case .smashed: "A tougher block is dropping in"
         }
@@ -41,13 +46,14 @@ enum CoachCue: Hashable {
         switch self {
         case .getInFrame, .goDown: Theme.cyan
         case .holdTop: .white
+        case .adjustPhone: Theme.amberSoft
         case .smashIt, .smashed: Theme.gold
         }
     }
 
     var symbol: String? {
         switch self {
-        case .getInFrame: "person.fill.viewfinder"
+        case .getInFrame, .adjustPhone: "person.fill.viewfinder"
         case .holdTop: "hand.raised.fill"
         case .smashed: "sparkles"
         case .goDown, .smashIt: nil

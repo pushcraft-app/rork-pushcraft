@@ -6,12 +6,20 @@ import Supabase
 /// broadcast channel keyed to the battle ID.
 ///
 /// Protocol (all messages carry the sender's `role`, "host" or "guest"):
-/// - `ready`: sent every second while waiting, so the other phone knows we're here.
-/// - `start`: the host picks the start moment once it hears the guest, then
-///   repeats `elapsed_ms` (time since the countdown began) every second. The
-///   guest aligns its countdown to that, so phone clocks never need to match.
-/// - `reps`: the current rep count, sent on every rep and repeated every second,
-///   so a late join or a dropped message corrects itself within a second.
+/// - `ready`: sent every second with the sender's readiness (calibrated and
+///   holding the top). The host begins the shared 5-second countdown only once
+///   BOTH phones report ready, so neither timer ever starts early or late.
+/// - `reset`: the host restarts the countdown when either player loses
+///   readiness before GO. Carries an `epoch`; stale messages are ignored.
+/// - `start`: the host starts the countdown, then repeats `elapsed_ms` (time
+///   since the countdown began) with its `epoch` every second. The guest
+///   aligns to that, so phone clocks never need to match.
+/// - `reps`: the current rep count, sent on every rep and repeated every
+///   second, so a late join or a dropped message corrects itself within a second.
+///
+/// Every start/reset carries a monotonically increasing `epoch`; receivers
+/// ignore anything older than the highest epoch they've seen, so a delayed old
+/// start can never trigger GO after a countdown restart.
 @MainActor
 @Observable
 final class BattleLiveSync {
@@ -21,7 +29,10 @@ final class BattleLiveSync {
     private(set) var isOpponentPresent = false
     /// True while this phone is subscribed to the battle channel.
     private(set) var isConnected = false
-    /// Local time the shared 5-second countdown began. Nil while waiting.
+    /// The opponent's latest readiness report.
+    private(set) var isOpponentReady = false
+    /// Local time the shared 5-second countdown began. Nil while waiting (or
+    /// after a restart, until both phones are ready again).
     private(set) var startAnchor: Date?
 
     @ObservationIgnored private var channel: RealtimeChannelV2?
@@ -31,6 +42,12 @@ final class BattleLiveSync {
     @ObservationIgnored private var myReps = 0
     @ObservationIgnored private var lastSentReps = -1
     @ObservationIgnored private var loggedEvents: Set<String> = []
+    @ObservationIgnored private var myReady = false
+    @ObservationIgnored private var isSolo = false
+    /// Epoch this phone increments when it starts or restarts the countdown.
+    @ObservationIgnored private var epoch = 0
+    /// Highest epoch seen from the opponent; older messages are stale.
+    @ObservationIgnored private var maxSeenEpoch = -1
 
     private var myRole: String { isHost ? "host" : "guest" }
 
@@ -44,7 +61,7 @@ final class BattleLiveSync {
         print("[BattleLive] Joining \(Self.topic(for: battleID)) as \(myRole)")
 
         // Streams must exist before subscribing so no early message is missed.
-        for event in [Event.ready, Event.start, Event.reps] {
+        for event in [Event.ready, Event.reset, Event.start, Event.reps] {
             let stream = channel.broadcastStream(event: event)
             tasks.append(Task { [weak self] in
                 for await message in stream {
@@ -56,11 +73,26 @@ final class BattleLiveSync {
         tasks.append(Task { [weak self] in await self?.heartbeat() })
     }
 
-    /// Starts the countdown without an opponent (they already played their run).
+    /// Starts the countdown without an opponent (they already played their
+    /// run). The countdown still begins only once this phone is ready.
     func beginSolo() {
         guard startAnchor == nil else { return }
-        startAnchor = Date()
-        print("[BattleLive] Opponent already played — starting solo")
+        isSolo = true
+        maybeStart()
+        print("[BattleLive] Opponent already played — waiting for local readiness")
+    }
+
+    /// Feeds the local readiness (calibrated, near the top, body visible) into
+    /// the handshake. On the host, losing readiness during the shared countdown
+    /// restarts it for both phones.
+    func setReady(_ ready: Bool) {
+        guard myReady != ready else { return }
+        myReady = ready
+        if !ready, isHost, let anchor = startAnchor, Date() < anchor.addingTimeInterval(Self.countdownSeconds) {
+            restartCountdown()
+        } else if ready {
+            maybeStart()
+        }
     }
 
     /// Records the local rep count and sends it right away when it changed.
@@ -84,6 +116,25 @@ final class BattleLiveSync {
         }
     }
 
+    // MARK: - Starting
+
+    /// The host opens the shared countdown once both phones report ready; a
+    /// solo run starts on local readiness alone.
+    private func maybeStart() {
+        guard startAnchor == nil, myReady, isSolo || isOpponentReady else { return }
+        epoch += 1
+        startAnchor = Date()
+        print("[BattleLive] Both players ready — host starts the countdown (epoch \(epoch))")
+    }
+
+    private func restartCountdown() {
+        epoch += 1
+        startAnchor = nil
+        isOpponentReady = false
+        send(Event.reset, ["epoch": .integer(epoch)])
+        print("[BattleLive] Readiness lost — countdown restarted (epoch \(epoch))")
+    }
+
     // MARK: - Connection
 
     private func maintainConnection(_ channel: RealtimeChannelV2) async {
@@ -102,13 +153,12 @@ final class BattleLiveSync {
 
     private func heartbeat() async {
         while !Task.isCancelled {
+            send(Event.ready, ["ready": .bool(myReady)])
             if let startAnchor {
                 let elapsed = Int(Date().timeIntervalSince(startAnchor) * 1000)
-                send(Event.start, ["elapsed_ms": .integer(elapsed)])
+                send(Event.start, ["elapsed_ms": .integer(elapsed), "epoch": .integer(epoch)])
                 lastSentReps = myReps
                 send(Event.reps, ["reps": .integer(myReps)])
-            } else {
-                send(Event.ready, [:])
             }
             try? await Task.sleep(for: .seconds(1))
         }
@@ -137,12 +187,26 @@ final class BattleLiveSync {
 
         switch event {
         case Event.ready:
-            // The host starts the shared countdown as soon as it hears the guest.
-            if isHost && startAnchor == nil {
-                startAnchor = Date()
-                print("[BattleLive] Both players here — host starts the countdown")
+            isOpponentReady = Self.bool(body["ready"])
+            if isHost {
+                if !isOpponentReady, let anchor = startAnchor,
+                   Date() < anchor.addingTimeInterval(Self.countdownSeconds) {
+                    // Opponent lowered during the countdown — restart it for both.
+                    restartCountdown()
+                } else if startAnchor == nil {
+                    maybeStart()
+                }
             }
+        case Event.reset:
+            guard let received = Self.int(body["epoch"]), received >= maxSeenEpoch else { return }
+            maxSeenEpoch = received
+            if startAnchor != nil {
+                print("[BattleLive] Countdown restarted by host (epoch \(received))")
+            }
+            startAnchor = nil
         case Event.start:
+            guard let received = Self.int(body["epoch"]), received >= maxSeenEpoch else { return }
+            maxSeenEpoch = received
             guard let elapsed = Self.int(body["elapsed_ms"]) else { return }
             let peerAnchor = Date().addingTimeInterval(-Double(max(0, elapsed)) / 1000)
             if let current = startAnchor {
@@ -155,7 +219,7 @@ final class BattleLiveSync {
                 guard Double(elapsed) / 1000 < Self.countdownSeconds + Double(battleDuration) - 5 else { return }
             }
             startAnchor = peerAnchor
-            print("[BattleLive] Countdown synced to opponent (\(elapsed) ms in)")
+            print("[BattleLive] Countdown synced to opponent (\(elapsed) ms in, epoch \(received))")
         case Event.reps:
             guard let reps = Self.int(body["reps"]), reps > opponentReps else { return }
             opponentReps = reps
@@ -179,6 +243,13 @@ final class BattleLiveSync {
         return nil
     }
 
+    private static func bool(_ value: AnyJSON?) -> Bool {
+        guard let value else { return false }
+        if let bool = value.boolValue { return bool }
+        if let int = value.intValue { return int != 0 }
+        return value.stringValue == "true"
+    }
+
     /// Length of the shared get-ready countdown before GO.
     static let countdownSeconds: TimeInterval = 5
 
@@ -188,6 +259,7 @@ final class BattleLiveSync {
 
     private enum Event {
         static let ready = "ready"
+        static let reset = "reset"
         static let start = "start"
         static let reps = "reps"
     }

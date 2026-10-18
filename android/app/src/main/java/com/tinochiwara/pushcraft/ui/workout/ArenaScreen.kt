@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.GppMaybe
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material.icons.filled.Verified
@@ -213,6 +214,26 @@ fun CameraMessageCard(status: CameraStatus) {
     }
 }
 
+/** What the user should do right now to become (or stay) ready before GO. */
+private fun holdLine(engine: GameEngine): String = when {
+    engine.isReady -> "READY — HOLD UNTIL GO"
+    engine.tracking.phase == RepPhase.Searching -> "GET INTO POSITION"
+    else -> "ARMS STRAIGHT — HOLD"
+}
+
+/** Re-runs the hold-at-top calibration from scratch. */
+@Composable
+private fun TryAgainButton(engine: GameEngine) {
+    Row(
+        Modifier.height(44.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+            .pressScale { engine.recalibrate() }.padding(horizontal = 22.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(Icons.Filled.Refresh, null, tint = Color.White, modifier = Modifier.size(15.dp))
+        Text("Try Again", style = rounded(15, FontWeight.Bold), color = Color.White)
+    }
+}
+
 /**
  * Live workout: camera + skeleton, floating block, counters and depth meter.
  * Checkpoints every rep; regular workouts get a 5-4-3-2-1 countdown, battles
@@ -293,18 +314,33 @@ fun ArenaScreen(
             AppPreferences.hasSeenProgressTip = true
         }
     }
+    // Get-ready countdown for a regular workout. The big number only ticks
+    // while the user is READY (calibrated, holding the top); a clear lowering
+    // or lost tracking restarts it from 5. It waits indefinitely for a valid
+    // setup — there is no "start anyway".
     LaunchedEffect(Unit) {
         if (session.isBattle) return@LaunchedEffect
         delay(600)
-        for (tick in 5 downTo 1) {
-            if (hasEnded) return@LaunchedEffect
+        var tick = 5
+        while (!hasEnded) {
+            if (!engine.isReady) {
+                if (countdown != 5) countdown = 5
+                tick = 5
+                delay(400)
+                continue
+            }
+            if (tick == 0) break
             countdown = tick
             SoundService.play(SoundService.Effect.Drop, 1.5f, 0.8f)
             Haptics.tick()
+            tick -= 1
             delay(1000)
         }
-        if (hasEnded) return@LaunchedEffect
+        if (hasEnded || !engine.isReady) return@LaunchedEffect
         countdown = null
+        // Clean slate at GO: keep the calibration, forget any setup movement,
+        // so the first counted rep must be a fresh down-and-up from the top.
+        engine.clearCharge()
         engine.isAcceptingReps = true
         showGo = true
         SoundService.play(SoundService.Effect.Hit, 1.25f)
@@ -318,16 +354,28 @@ fun ArenaScreen(
             if (!hasEnded) checkpoint()
         }
     }
-    // Battle: waiting → shared 5-4-3-2-1 → GO (registers the run) → timer → end.
-    // Both phones derive every step from the same start anchor.
+    // Battle: waiting → both ready → shared 5-4-3-2-1 → GO (registers the
+    // run) → timer → end. The host opens the countdown only once BOTH phones
+    // report ready, and a readiness loss before GO restarts it for both —
+    // neither timer is ever ahead of the other.
     LaunchedEffect(Unit) {
         if (!session.isBattle) return@LaunchedEffect
         val countdownMs = BattleLiveSync.COUNTDOWN_MS
         val durationMs = session.battleDurationSeconds * 1000L
         var lastTick: Int? = null
         while (!hasEnded) {
+            live.setReady(engine.isReady)
             val anchor = live.startAnchor.value
-            if (anchor == null) { delay(100); continue }
+            if (anchor == null) {
+                // Waiting, or the countdown was restarted for both phones.
+                if (battleStage != STAGE_WAITING) {
+                    battleStage = STAGE_WAITING
+                    countdown = null
+                    lastTick = null
+                }
+                delay(100)
+                continue
+            }
             val elapsed = System.currentTimeMillis() - anchor
             if (elapsed < countdownMs) {
                 battleStage = STAGE_COUNTDOWN
@@ -342,6 +390,9 @@ fun ArenaScreen(
                 if (battleStage != STAGE_LIVE) {
                     battleStage = STAGE_LIVE
                     countdown = null
+                    // Clean slate at GO: keep the calibration, forget any setup
+                    // movement, so the first rep is a fresh down-and-up.
+                    engine.clearCharge()
                     engine.isAcceptingReps = true
                     live.update(engine.reps)
                     scope.launch {
@@ -445,8 +496,9 @@ fun ArenaScreen(
             Box(Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) { BlockStage(engine, 150f) }
             Spacer(Modifier.weight(1f))
             Column(Modifier.padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                DepthMeter(engine.tracking, Modifier.padding(horizontal = 40.dp))
+                DepthMeter(engine.tracking, preStart = !engine.isAcceptingReps, isReady = engine.isReady, modifier = Modifier.padding(horizontal = 40.dp))
                 CueView(engine.cue, engine.exercise)
+                if (!engine.isAcceptingReps && !hasEnded) TryAgainButton(engine)
             }
         }
         if (session.isBattle && battleStage == STAGE_WAITING) {
@@ -456,14 +508,17 @@ fun ArenaScreen(
                 isConnected = liveConnected, onLeave = ::leaveBeforeStart
             )
         }
-        if (countdown != null || showGo) CountdownOverlay(countdown, showGo)
+        if (countdown != null || showGo) CountdownOverlay(countdown, showGo, holdLine(engine))
         if (session.isBattle && battleStage == STAGE_COUNTDOWN) {
             Box(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 40.dp), contentAlignment = Alignment.BottomCenter) {
-                Box(
-                    Modifier.height(44.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
-                        .pressScale { leaveBeforeStart() }.padding(horizontal = 26.dp),
-                    contentAlignment = Alignment.Center
-                ) { Text("Leave", style = rounded(15, FontWeight.Bold), color = Color.White) }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TryAgainButton(engine)
+                    Box(
+                        Modifier.height(44.dp).background(Pc.panel, CircleShape).border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+                            .pressScale { leaveBeforeStart() }.padding(horizontal = 26.dp),
+                        contentAlignment = Alignment.Center
+                    ) { Text("Leave", style = rounded(15, FontWeight.Bold), color = Color.White) }
+                }
             }
         }
         CameraMessageCard(engine.cameraStatus)
@@ -599,7 +654,7 @@ private fun BattleWaitingOverlay(
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Waiting for ${opponentName ?: "your friend"}…", style = rounded(22, FontWeight.ExtraBold), color = Color.White, textAlign = TextAlign.Center, maxLines = 2)
                 Text(
-                    if (isConnected) "The battle starts with a 5-second countdown as soon as they open it." else "Connecting to the battle…",
+                    if (isConnected) "You'll both get a 5-second countdown once you're in position." else "Connecting to the battle…",
                     style = rounded(15, FontWeight.Medium), color = Color.White.copy(alpha = 0.72f), textAlign = TextAlign.Center
                 )
             }
@@ -621,7 +676,7 @@ private fun BattleWaitingOverlay(
 }
 
 @Composable
-private fun CountdownOverlay(count: Int?, isGo: Boolean) {
+private fun CountdownOverlay(count: Int?, isGo: Boolean, statusLine: String) {
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.42f)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             AnimatedContent(if (isGo) -1 else (count ?: 0), transitionSpec = { (scaleIn(initialScale = 1.7f) + fadeIn()) togetherWith fadeOut() }, label = "cd") { v ->
@@ -631,7 +686,9 @@ private fun CountdownOverlay(count: Int?, isGo: Boolean) {
                     Text("$v", style = rounded(110, FontWeight.Black), color = Color.White)
                 }
             }
-            if (!isGo) Text("GET INTO POSITION", style = rounded(17, FontWeight.Bold, 2f), color = Color.White.copy(alpha = 0.9f))
+            if (!isGo) androidx.compose.animation.AnimatedContent(statusLine, transitionSpec = { (fadeIn()) togetherWith (fadeOut()) }, label = "status") { line ->
+                Text(line, style = rounded(17, FontWeight.Bold, 2f), color = Color.White.copy(alpha = 0.9f))
+            }
         }
     }
 }
@@ -681,7 +738,7 @@ fun IntroWorkoutScreen(onFinish: (Int) -> Unit, onSkip: () -> Unit) {
             Box(Modifier.fillMaxWidth().padding(top = 18.dp), contentAlignment = Alignment.Center) { BlockStage(engine, 172f, showLabel = false) }
             Spacer(Modifier.weight(1f))
             Column(Modifier.padding(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                DepthMeter(engine.tracking, Modifier.padding(horizontal = 40.dp))
+                DepthMeter(engine.tracking, modifier = Modifier.padding(horizontal = 40.dp))
                 CueView(engine.cue, engine.exercise)
             }
         }

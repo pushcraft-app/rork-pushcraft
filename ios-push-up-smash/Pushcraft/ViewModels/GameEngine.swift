@@ -46,6 +46,8 @@ final class GameEngine {
     private(set) var hitCount = 0
     private(set) var smashCount = 0
     private(set) var tracking = RepTracking.initial
+    /// Live readiness for the pre-start countdown (calibrated, near the top, visible).
+    private(set) var isReady = false
     private(set) var cue: CoachCue = .getInFrame
     private(set) var pose = DisplayPose.empty
     private(set) var coinBursts: [CoinBurst] = []
@@ -171,10 +173,14 @@ final class GameEngine {
         if detector.state != tracking {
             tracking = detector.state
         }
+        if detector.isReady != isReady {
+            isReady = detector.isReady
+        }
         updatePose(frame, now: now)
         updateCue()
 
-        if event.justCharged {
+        // Charge feedback stays quiet before GO — setup movements are not gameplay.
+        if event.justCharged, isAcceptingReps {
             haptics.charged()
         }
         if event.repCompleted {
@@ -205,10 +211,19 @@ final class GameEngine {
         let next: CoachCue
         if isCelebrating {
             next = .smashed
+        } else if !isAcceptingReps {
+            // Before GO the only instruction is getting set up and holding it.
+            switch tracking.phase {
+            case .searching: next = .getInFrame
+            case .calibrating: next = .holdTop
+            case .noArm: next = .adjustPhone
+            case .top, .charging, .charged: next = .holdTop
+            }
         } else {
             switch tracking.phase {
             case .searching: next = .getInFrame
             case .calibrating: next = .holdTop
+            case .noArm: next = .adjustPhone
             case .top, .charging: next = .goDown
             case .charged: next = .smashIt
             }
@@ -216,6 +231,12 @@ final class GameEngine {
         if next != cue {
             cue = next
         }
+    }
+
+    /// Forgets any pre-start charge so the first counted rep must be a fresh
+    /// down-and-up from the calibrated top. Called at GO.
+    func clearCharge() {
+        detector.clearCharge()
     }
     // MARK: - Game
 

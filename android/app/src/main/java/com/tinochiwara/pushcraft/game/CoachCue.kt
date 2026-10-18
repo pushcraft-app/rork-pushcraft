@@ -11,11 +11,12 @@ import com.tinochiwara.pushcraft.ui.theme.Pc
 
 /** The single instruction shown under the depth meter. */
 enum class CoachCue {
-    GetInFrame, HoldTop, GoDown, SmashIt, Smashed;
+    GetInFrame, HoldTop, AdjustPhone, GoDown, SmashIt, Smashed;
 
     fun title(exercise: Exercise): String = when (this) {
         GetInFrame -> "GET IN FRAME"
-        HoldTop -> "HOLD THE START"
+        HoldTop -> if (exercise == Exercise.SitUps) "LIE FLAT — HOLD" else "ARMS STRAIGHT — HOLD"
+        AdjustPhone -> "SHOW ONE ARM"
         GoDown -> if (exercise == Exercise.SitUps) "SIT UP TO CHARGE" else "GO DOWN TO CHARGE"
         SmashIt -> if (exercise == Exercise.SitUps) "SIT UP — SMASH IT!" else "PUSH UP — SMASH IT!"
         Smashed -> "BLOCK SMASHED!"
@@ -24,7 +25,8 @@ enum class CoachCue {
     fun subtitle(exercise: Exercise): String? = when (this) {
         GetInFrame -> if (exercise == Exercise.SitUps) "Prop your phone up to the side, then lie on your back"
         else "Prop your phone up facing you, then get into a plank"
-        HoldTop -> if (exercise == Exercise.SitUps) "Lie flat, stay still — calibrating" else "Arms straight, stay still — calibrating"
+        HoldTop -> if (exercise == Exercise.SitUps) "Lie flat, stay still — calibrating" else "Hold the top position — calibrating"
+        AdjustPhone -> "Adjust your phone so one arm is fully visible"
         GoDown, SmashIt -> null
         Smashed -> "A tougher block is dropping in"
     }
@@ -33,12 +35,13 @@ enum class CoachCue {
         get() = when (this) {
             GetInFrame, GoDown -> Pc.cyan
             HoldTop -> Color.White
+            AdjustPhone -> Pc.amberSoft
             SmashIt, Smashed -> Pc.gold
         }
 
     val icon: ImageVector?
         get() = when (this) {
-            GetInFrame -> Icons.Filled.CenterFocusStrong
+            GetInFrame, AdjustPhone -> Icons.Filled.CenterFocusStrong
             HoldTop -> Icons.Filled.BackHand
             Smashed -> Icons.Filled.AutoAwesome
             else -> null

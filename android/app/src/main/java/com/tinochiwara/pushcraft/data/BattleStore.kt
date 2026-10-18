@@ -24,6 +24,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
@@ -108,11 +109,18 @@ val List<Battle>.completed: List<Battle> get() = filter { it.phase == BattlePhas
 /**
  * Live link between the two phones in a battle, over a Supabase Realtime
  * broadcast channel keyed to the battle ID. Same protocol as the iPhone app:
- * - `ready` every second while waiting, so the other phone knows we're here.
- * - `start` with `elapsed_ms` since the countdown began, every second once it
- *   started. The host starts it on hearing the guest; the guest aligns to it.
+ * - `ready` every second with the sender's readiness (calibrated and holding
+ *   the top). The host begins the shared 5-second countdown only once BOTH
+ *   phones report ready, so neither timer ever starts early or late.
+ * - `reset`: the host restarts the countdown when either player loses
+ *   readiness before GO. Carries an `epoch`; stale messages are ignored.
+ * - `start` with `elapsed_ms` since the countdown began plus its `epoch`,
+ *   every second once it started. The guest aligns to it.
  * - `reps` on every rep and repeated every second.
- * Every message carries the sender's `role` ("host" / "guest").
+ * Every message carries the sender's `role` ("host" / "guest"). Start and
+ * reset messages carry a monotonically increasing `epoch`; receivers ignore
+ * anything older than the highest epoch they've seen, so a delayed old start
+ * can never trigger GO after a countdown restart.
  */
 class BattleLiveSync {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -120,6 +128,9 @@ class BattleLiveSync {
     val opponentReps: StateFlow<Int> = _opponentReps.asStateFlow()
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+    /** The opponent's latest readiness report. */
+    private val _isOpponentReady = MutableStateFlow(false)
+    val isOpponentReady: StateFlow<Boolean> = _isOpponentReady.asStateFlow()
     /** Wall-clock millis the shared 5-second countdown began; null while waiting. */
     private val _startAnchor = MutableStateFlow<Long?>(null)
     val startAnchor: StateFlow<Long?> = _startAnchor.asStateFlow()
@@ -131,6 +142,12 @@ class BattleLiveSync {
     private var myReps = 0
     private var lastSent = -1
     private val logged = mutableSetOf<String>()
+    private var myReady = false
+    private var isSolo = false
+    /** Epoch this phone increments when it starts or restarts the countdown. */
+    private var epoch = 0
+    /** Highest epoch seen from the opponent; older messages are stale. */
+    private var maxSeenEpoch = -1
     private val role get() = if (isHost) "host" else "guest"
 
     fun connect(battleId: String, isHost: Boolean, battleDuration: Int) {
@@ -141,7 +158,7 @@ class BattleLiveSync {
         val ch = Backend.client.channel(topic)
         channel = ch
         Log.i(TAG, "Joining $topic as $role")
-        for (event in listOf(EVENT_READY, EVENT_START, EVENT_REPS)) {
+        for (event in listOf(EVENT_READY, EVENT_RESET, EVENT_START, EVENT_REPS)) {
             val flow = ch.broadcastFlow<JsonObject>(event = event)
             jobs += scope.launch { flow.collect { handle(event, it) } }
         }
@@ -160,24 +177,63 @@ class BattleLiveSync {
         }
         jobs += scope.launch {
             while (isActive) {
+                send(EVENT_READY, buildJsonObject { put("ready", myReady) })
                 val anchor = _startAnchor.value
                 if (anchor != null) {
-                    send(EVENT_START, buildJsonObject { put("elapsed_ms", System.currentTimeMillis() - anchor) })
+                    send(EVENT_START, buildJsonObject {
+                        put("elapsed_ms", System.currentTimeMillis() - anchor)
+                        put("epoch", epoch)
+                    })
                     lastSent = myReps
                     send(EVENT_REPS, buildJsonObject { put("reps", myReps) })
-                } else {
-                    send(EVENT_READY, buildJsonObject { })
                 }
                 delay(1000)
             }
         }
     }
 
-    /** Starts the countdown without an opponent (they already played their run). */
+    /** The host opens the shared countdown once both phones report ready; a solo run starts on local readiness alone. */
+    private fun maybeStart() {
+        if (_startAnchor.value != null || !myReady) return
+        if (!isSolo && !_isOpponentReady.value) return
+        epoch += 1
+        _startAnchor.value = System.currentTimeMillis()
+        Log.i(TAG, "Both players ready — host starts the countdown (epoch $epoch)")
+    }
+
+    private fun restartCountdown() {
+        epoch += 1
+        _startAnchor.value = null
+        _isOpponentReady.value = false
+        send(EVENT_RESET, buildJsonObject { put("epoch", epoch) })
+        Log.i(TAG, "Readiness lost — countdown restarted (epoch $epoch)")
+    }
+
+    /**
+     * Runs without an opponent (they already played their run). The countdown
+     * still begins only once this phone is ready.
+     */
     fun beginSolo() {
         if (_startAnchor.value != null) return
-        _startAnchor.value = System.currentTimeMillis()
-        Log.i(TAG, "Opponent already played — starting solo")
+        isSolo = true
+        maybeStart()
+        Log.i(TAG, "Opponent already played — waiting for local readiness")
+    }
+
+    /**
+     * Feeds the local readiness (calibrated, near the top, body visible) into
+     * the handshake. On the host, losing readiness during the shared countdown
+     * restarts it for both phones.
+     */
+    fun setReady(ready: Boolean) {
+        if (myReady == ready) return
+        myReady = ready
+        val anchor = _startAnchor.value
+        if (!ready && isHost && anchor != null && System.currentTimeMillis() < anchor + COUNTDOWN_MS) {
+            restartCountdown()
+        } else if (ready) {
+            maybeStart()
+        }
     }
 
     /** Records the local rep count and sends it right away when it changed. */
@@ -214,11 +270,29 @@ class BattleLiveSync {
         if ((body["role"] as? JsonPrimitive)?.contentOrNull == role) return
         if (logged.add(event)) Log.i(TAG, "First '$event' received from opponent")
         when (event) {
-            EVENT_READY -> if (isHost && _startAnchor.value == null) {
-                _startAnchor.value = System.currentTimeMillis()
-                Log.i(TAG, "Both players here — host starts the countdown")
+            EVENT_READY -> {
+                _isOpponentReady.value = (body["ready"] as? JsonPrimitive)?.booleanOrNull ?: false
+                if (isHost) {
+                    val anchor = _startAnchor.value
+                    if (!_isOpponentReady.value && anchor != null && System.currentTimeMillis() < anchor + COUNTDOWN_MS) {
+                        // Opponent lowered during the countdown — restart it for both.
+                        restartCountdown()
+                    } else if (anchor == null) {
+                        maybeStart()
+                    }
+                }
+            }
+            EVENT_RESET -> {
+                val received = number(body["epoch"])?.toInt() ?: return
+                if (received < maxSeenEpoch) return
+                maxSeenEpoch = received
+                if (_startAnchor.value != null) Log.i(TAG, "Countdown restarted by host (epoch $received)")
+                _startAnchor.value = null
             }
             EVENT_START -> {
+                val received = number(body["epoch"])?.toInt() ?: return
+                if (received < maxSeenEpoch) return
+                maxSeenEpoch = received
                 val elapsed = number(body["elapsed_ms"])?.toLong() ?: return
                 val now = System.currentTimeMillis()
                 val peerAnchor = now - maxOf(0L, elapsed)
@@ -231,7 +305,7 @@ class BattleLiveSync {
                     return
                 }
                 _startAnchor.value = peerAnchor
-                Log.i(TAG, "Countdown synced to opponent ($elapsed ms in)")
+                Log.i(TAG, "Countdown synced to opponent ($elapsed ms in, epoch $received)")
             }
             EVENT_REPS -> {
                 val reps = number(body["reps"])?.toInt() ?: return
@@ -252,6 +326,7 @@ class BattleLiveSync {
         const val COUNTDOWN_MS = 5000L
         private const val TAG = "BattleLive"
         private const val EVENT_READY = "ready"
+        private const val EVENT_RESET = "reset"
         private const val EVENT_START = "start"
         private const val EVENT_REPS = "reps"
     }

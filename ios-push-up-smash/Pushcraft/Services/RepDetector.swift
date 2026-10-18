@@ -5,7 +5,10 @@ import Foundation
 nonisolated struct RepTracking: Equatable, Sendable {
     enum Phase: Equatable, Sendable {
         case searching
+        /// Holding still, calibrating (arms verified straight for push-ups).
         case calibrating
+        /// Holding still but no arm chain is visible to verify the start.
+        case noArm
         case top
         case charging
         case charged
@@ -36,6 +39,14 @@ nonisolated struct RepEvent: Sendable {
 ///   the expected travel so the thresholds scale with distance from the camera.
 /// - Direction: push-ups charge while the anchor sinks (torso down); sit-ups charge while it
 ///   rises (torso up from lying flat) — same hysteresis, mirrored.
+/// - Straight-arm check: push-up calibration can only complete when one arm's chain
+///   (shoulder + elbow + wrist) is visible and near-straight, so holding still at the
+///   bottom can never lock in a false "top". Collinearity survives projection, so a
+///   foreshortened but straight arm still passes. Sit-ups skip the check — lying flat
+///   IS their start position.
+/// - Readiness: a live flag for the pre-start countdown. Ready = calibrated, near the
+///   top, and visible. Lost only by a clear lowering (past 50 % of the range for 0.3 s)
+///   or by the full tracking-loss reset — never by jitter or a brief flicker.
 /// - Hysteresis: charged at 55 % of the range, rep counted on the way back above 25 %,
 ///   with a 0.35 s debounce so jittery tracking can't double-count.
 nonisolated struct RepDetector: Sendable {
@@ -45,6 +56,9 @@ nonisolated struct RepDetector: Sendable {
     static let calibrationDuration = 1.0
     static let calibrationTolerance = 0.035
     static let lostTimeout = 2.5
+    static let straightArmAngle: Double = 150
+    static let loweredDepth = 0.5
+    static let loweredSeconds = 0.3
 
     /// Which movement is being counted. Sit-ups invert the charge direction
     /// (the torso rises instead of sinking) and use a wider travel range.
@@ -71,6 +85,13 @@ nonisolated struct RepDetector: Sendable {
     private var peak = 0.0
     private var lastRep = -Double.infinity
 
+    private var isLowered = false
+    private var lowerStart: Double?
+
+    /// Live readiness for the pre-start countdown: calibrated, near the top,
+    /// body visible. Only meaningful before the workout starts.
+    private(set) var isReady = false
+
     /// +1 for push-ups (charge while the anchor sinks), −1 for sit-ups
     /// (charge while the anchor rises).
     private var direction: Double { exercise == .sitUps ? -1 : 1 }
@@ -87,6 +108,9 @@ nonisolated struct RepDetector: Sendable {
                 filtered = nil
                 top = nil
                 isCharged = false
+                isLowered = false
+                lowerStart = nil
+                isReady = false
                 calibrationStart = nil
                 state = .initial
             }
@@ -134,9 +158,30 @@ nonisolated struct RepDetector: Sendable {
             }
         }
 
+        updateReadiness(depth: depth, now: now)
+
         let phase: RepTracking.Phase = isCharged ? .charged : (depth > 0.08 ? .charging : .top)
         state = RepTracking(phase: phase, depth: min(depth, 1), calibration: 1)
         return event
+    }
+
+    /// Keeps the top-position calibration but forgets any charge, peak depth
+    /// and pending setup movement, so the first counted rep must be a fresh
+    /// down-and-up. Called at GO.
+    mutating func clearCharge() {
+        isCharged = false
+        peak = 0
+    }
+
+    private mutating func updateReadiness(depth: Double, now: Double) {
+        if depth >= Self.loweredDepth {
+            if lowerStart == nil { lowerStart = now }
+            if now - lowerStart! >= Self.loweredSeconds { isLowered = true }
+        } else {
+            lowerStart = nil
+            if depth <= Self.upThreshold { isLowered = false }
+        }
+        isReady = top != nil && !isLowered
     }
 
     // MARK: - Private
@@ -165,6 +210,12 @@ nonisolated struct RepDetector: Sendable {
 
         let progress = min((now - (calibrationStart ?? now)) / Self.calibrationDuration, 1)
         if progress >= 1, calibrationCount > 0 {
+            // Push-ups may never calibrate on stillness alone: the start
+            // position must be verified straight-armed via one visible arm.
+            if exercise == .pushUps, !hasStraightArm(in: frame) {
+                state = RepTracking(phase: .noArm, depth: 0, calibration: progress)
+                return
+            }
             top = calibrationSum / Double(calibrationCount)
             let span = spanCount > 0 ? spanSum / Double(spanCount) : 0.2
             // Sit-ups rotate the whole torso, so expect a much larger travel.
@@ -173,10 +224,56 @@ nonisolated struct RepDetector: Sendable {
             range = min(max(span * factor, bounds.0), bounds.1)
             minRange = range * 0.8
             isCharged = false
+            isLowered = false
+            lowerStart = nil
+            isReady = true
             calibrationStart = nil
             state = RepTracking(phase: .top, depth: 0, calibration: 1)
         } else {
-            state = RepTracking(phase: .calibrating, depth: 0, calibration: progress)
+            let armsOK = exercise == .sitUps || hasStraightArm(in: frame)
+            state = RepTracking(phase: armsOK ? .calibrating : .noArm, depth: 0, calibration: progress)
+        }
+    }
+
+    /// True when either arm's shoulder-elbow-wrist chain is visible and near
+    /// straight. Collinearity survives projection, so this works from any
+    /// camera angle where the chain is visible at all.
+    private func hasStraightArm(in frame: PoseFrame) -> Bool {
+        guard frame.imageSize.height > 0 else { return false }
+        let aspect = frame.imageSize.width / frame.imageSize.height
+        for arm in [Arm.left, .right] where arm.isStraight(in: frame, aspect: aspect) {
+            return true
+        }
+        return false
+    }
+
+    private enum Arm {
+        case left, right
+
+        func isStraight(in frame: PoseFrame, aspect: CGFloat) -> Bool {
+            let joints = frame.joints
+            switch self {
+            case .left:
+                guard let s = joints[.leftShoulder], let e = joints[.leftElbow], let w = joints[.leftWrist] else { return false }
+                return Self.angle(s, e, w, aspect: aspect) >= RepDetector.straightArmAngle
+            case .right:
+                guard let s = joints[.rightShoulder], let e = joints[.rightElbow], let w = joints[.rightWrist] else { return false }
+                return Self.angle(s, e, w, aspect: aspect) >= RepDetector.straightArmAngle
+            }
+        }
+
+        /// Interior elbow angle in degrees. X is rescaled by the image aspect
+        /// so the normalized coordinates measure true angles.
+        private static func angle(_ shoulder: CGPoint, _ elbow: CGPoint, _ wrist: CGPoint, aspect: CGFloat) -> Double {
+            func vector(_ from: CGPoint, _ to: CGPoint) -> CGPoint {
+                CGPoint(x: (to.x - from.x) * aspect, y: to.y - from.y)
+            }
+            let u = vector(elbow, shoulder)
+            let v = vector(elbow, wrist)
+            let dot = Double(u.x * v.x + u.y * v.y)
+            let magnitude = sqrt(Double(u.x * u.x + u.y * u.y)) * sqrt(Double(v.x * v.x + v.y * v.y))
+            guard magnitude > 1e-6 else { return 0 }
+            return acos(min(max(dot / magnitude, -1), 1)) * 180 / .pi
         }
     }
 

@@ -96,23 +96,26 @@ struct ArenaView: View {
             }
 
             if countdownRemaining != nil || showGo {
-                StartCountdownOverlay(count: countdownRemaining, isGo: showGo)
+                StartCountdownOverlay(count: countdownRemaining, isGo: showGo, statusLine: holdLine)
                     .allowsHitTesting(false)
             }
 
             if session.isBattle && battleStage == .countdown {
                 VStack {
                     Spacer()
-                    Button(action: leaveBeforeStart) {
-                        Text("Leave")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 26)
-                            .frame(height: 44)
-                            .background(Theme.panel, in: .capsule)
-                            .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+                    HStack(spacing: 12) {
+                        tryAgainButton
+                        Button(action: leaveBeforeStart) {
+                            Text("Leave")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 26)
+                                .frame(height: 44)
+                                .background(Theme.panel, in: .capsule)
+                                .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+                        }
+                        .buttonStyle(PressScaleStyle())
                     }
-                    .buttonStyle(PressScaleStyle())
                     .padding(.bottom, 40)
                 }
             }
@@ -194,23 +197,44 @@ struct ArenaView: View {
 
     // MARK: - Timing
 
-    /// 5-4-3-2-1 get-ready countdown before a regular workout starts counting.
-    /// Battles skip it (their 60-second clock is server-side and already
-    /// running), and an early exit cancels it.
+    /// Instruction line in the countdown overlay: what the user should do right
+    /// now to become (or stay) ready.
+    private var holdLine: String {
+        if engine.isReady { return "READY — HOLD UNTIL GO" }
+        return engine.tracking.phase == .searching ? "GET INTO POSITION" : "ARMS STRAIGHT — HOLD"
+    }
+
+    /// Get-ready countdown before a regular workout starts counting. The big
+    /// number only ticks while the user is READY (calibrated, holding the top);
+    /// a clear lowering or lost tracking restarts it from 5. It waits
+    /// indefinitely for a valid setup — there is no "start anyway".
     private func runCountdown() async {
         guard !session.isBattle else { return }
         try? await Task.sleep(for: .seconds(0.6))
-        for tick in stride(from: 5, through: 1, by: -1) {
-            guard !hasEnded else { return }
+        var tick = 5
+        while !hasEnded {
+            if !engine.isReady {
+                if countdownRemaining != 5 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { countdownRemaining = 5 }
+                }
+                tick = 5
+                try? await Task.sleep(for: .seconds(0.4))
+                continue
+            }
+            if tick == 0 { break }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 countdownRemaining = tick
             }
             sound.play(.drop, pitch: 1.5, volume: 0.8)
             HapticService.ui.tick()
+            tick -= 1
             try? await Task.sleep(for: .seconds(1))
         }
-        guard !hasEnded else { return }
+        guard !hasEnded, engine.isReady else { return }
         countdownRemaining = nil
+        // Clean slate at GO: keep the calibration, forget any setup movement,
+        // so the first counted rep must be a fresh down-and-up from the top.
+        engine.clearCharge()
         engine.isAcceptingReps = true
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { showGo = true }
         sound.play(.hit, pitch: 1.25, volume: 1)
@@ -226,9 +250,11 @@ struct ArenaView: View {
         }
     }
 
-    /// Drives a battle from the shared start moment: waiting → 5-4-3-2-1 →
-    /// GO (registers the run) → exactly the battle duration → end. Both
-    /// phones derive every step from the same anchor, so they stay in step.
+    /// Drives a battle from the shared start moment: waiting → both ready →
+    /// 5-4-3-2-1 → GO (registers the run) → exactly the battle duration → end.
+    /// The host only opens the countdown once BOTH phones report ready, and a
+    /// readiness loss before GO restarts it for both — neither timer is ever
+    /// ahead of the other.
     private func runBattleTimer() async {
         guard session.isBattle else { return }
         let countdown = BattleLiveSync.countdownSeconds
@@ -236,7 +262,14 @@ struct ArenaView: View {
         var lastTick: Int?
 
         while !Task.isCancelled && !hasEnded {
+            liveSync.setReady(engine.isReady)
             guard let anchor = liveSync.startAnchor else {
+                // Waiting, or the countdown was restarted for both phones.
+                if battleStage != .waiting {
+                    withAnimation(.easeOut(duration: 0.25)) { battleStage = .waiting }
+                    countdownRemaining = nil
+                    lastTick = nil
+                }
                 try? await Task.sleep(for: .milliseconds(100))
                 continue
             }
@@ -257,6 +290,9 @@ struct ArenaView: View {
                 if battleStage != .live {
                     battleStage = .live
                     countdownRemaining = nil
+                    // Clean slate at GO: keep the calibration, forget any setup
+                    // movement, so the first rep is a fresh down-and-up.
+                    engine.clearCharge()
                     engine.isAcceptingReps = true
                     liveSync.update(reps: engine.reps)
                     Task { await registerRun() }
@@ -442,9 +478,12 @@ struct ArenaView: View {
             // Tighter grouping that hugs the bottom edge so the block and
             // body stay unobstructed.
             VStack(spacing: 6) {
-                DepthMeter(tracking: engine.tracking)
+                DepthMeter(tracking: engine.tracking, preStart: !engine.isAcceptingReps, isReady: engine.isReady)
                     .padding(.horizontal, 40)
                 CueView(cue: engine.cue, exercise: engine.exercise)
+                if !engine.isAcceptingReps && !hasEnded {
+                    tryAgainButton
+                }
             }
             .padding(.bottom, 10)
         }
@@ -511,8 +550,25 @@ struct ArenaView: View {
         .accessibilityLabel(isComplete ? "Workout completed. Keep going." : "\(engine.reps) of \(session.completionReps) reps")
     }
 
+    /// Re-runs the hold-at-top calibration from scratch — for when the user
+    /// set the phone down differently after calibrating.
+    private var tryAgainButton: some View {
+        Button(action: engine.recalibrate) {
+            Label("Try Again", systemImage: "arrow.clockwise")
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 26)
+                .frame(height: 44)
+                .background(Theme.panel, in: .capsule)
+                .overlay { Capsule().strokeBorder(.white.opacity(0.22), lineWidth: 1) }
+        }
+        .buttonStyle(PressScaleStyle())
+        .transition(.opacity)
+        .accessibilityLabel("Recalibrate")
+    }
+
     private var blockStage: some View {
-        let isCharging = engine.tracking.phase == .charging || engine.tracking.phase == .charged
+        let isCharging = engine.isAcceptingReps && (engine.tracking.phase == .charging || engine.tracking.phase == .charged)
         let charge = isCharging ? engine.tracking.depth : 0
         let damage = engine.spec.health > 0 ? Double(engine.hitsTaken) / Double(engine.spec.health) : 0
 
@@ -796,7 +852,7 @@ private struct BattleWaitingOverlay: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                     Text(isConnected
-                         ? "The battle starts with a 5-second countdown as soon as they open it."
+                         ? "You'll both get a 5-second countdown once you're in position."
                          : "Connecting to the battle…")
                         .font(.system(size: 15, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
@@ -932,10 +988,12 @@ private struct CameraMessageView: View {
     }
 }
 
-/// Big 5-4-3-2-1 get-ready overlay shown before reps start counting.
+/// Big 5-4-3-2-1 get-ready overlay shown before reps start counting. The
+/// status line tells the user how to become (or stay) ready.
 private struct StartCountdownOverlay: View {
     let count: Int?
     let isGo: Bool
+    var statusLine: String = "GET INTO POSITION"
 
     var body: some View {
         ZStack {
@@ -961,11 +1019,13 @@ private struct StartCountdownOverlay: View {
                 }
 
                 if !isGo {
-                    Text("GET INTO POSITION")
+                    Text(statusLine)
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .tracking(2)
                         .foregroundStyle(.white.opacity(0.9))
                         .shadow(color: .black.opacity(0.6), radius: 4)
+                        .id(statusLine)
+                        .animation(.easeOut(duration: 0.2), value: statusLine)
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: count)

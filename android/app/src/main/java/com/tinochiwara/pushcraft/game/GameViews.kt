@@ -301,13 +301,30 @@ fun EffectsOverlay(engine: GameEngine, modifier: Modifier = Modifier) {
     }
 }
 
-/** Charge bar: fills on the way down, turns gold once the rep is charged. */
+/**
+ * Charge bar: fills on the way down, turns gold once the rep is charged.
+ *
+ * Before GO ([preStart]) it doubles as the readiness meter: white while
+ * calibrating, solid gold when READY, and it never shows charge depth —
+ * setup movements are not gameplay.
+ */
 @Composable
-fun DepthMeter(tracking: RepTracking, modifier: Modifier = Modifier) {
+fun DepthMeter(tracking: RepTracking, preStart: Boolean = false, isReady: Boolean = false, modifier: Modifier = Modifier) {
     val calibrating = tracking.phase == RepPhase.Calibrating
+    val noArm = tracking.phase == RepPhase.NoArm
     val charged = tracking.phase == RepPhase.Charged
-    val fill = (if (calibrating) tracking.calibration else tracking.depth).toFloat()
-    val color = if (calibrating) Color.White else if (charged) Pc.gold else Pc.cyan
+    val fill = (when {
+        preStart && isReady -> 1.0
+        preStart -> if (calibrating || noArm) tracking.calibration else 0.0
+        calibrating -> tracking.calibration
+        else -> tracking.depth
+    }).toFloat()
+    val color = when {
+        preStart -> if (isReady) Pc.gold else Color.White
+        calibrating || noArm -> Color.White
+        charged -> Pc.gold
+        else -> Pc.cyan
+    }
     val animFill by animateFloatAsState(fill, spring(dampingRatio = 0.85f, stiffness = 900f), label = "fill")
     val scale by animateFloatAsState(if (charged) 1.03f else 1f, spring(dampingRatio = 0.55f), label = "scale")
     Box(
@@ -330,7 +347,7 @@ fun DepthMeter(tracking: RepTracking, modifier: Modifier = Modifier) {
                         .background(Brush.horizontalGradient(listOf(color.copy(alpha = 0.7f), color, Color.White.copy(alpha = 0.9f))), CircleShape)
                 )
             }
-            if (!calibrating) {
+            if (!calibrating && !preStart) {
                 Box(
                     Modifier
                         .offset(x = w * RepDetector.DOWN_THRESHOLD.toFloat() - 1.5.dp)

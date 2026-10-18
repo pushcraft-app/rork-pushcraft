@@ -46,6 +46,8 @@ class GameEngine(val exercise: Exercise = Exercise.PushUps, firstBlockHealth: In
     var hitCount by mutableIntStateOf(0); private set
     var smashCount by mutableIntStateOf(0); private set
     var tracking by mutableStateOf(RepTracking.Initial); private set
+    /** Live readiness for the pre-start countdown (calibrated, near the top, visible). */
+    var isReady by mutableStateOf(false); private set
     var cue by mutableStateOf(CoachCue.GetInFrame); private set
     var pose by mutableStateOf(DisplayPose.Empty); private set
     var coinBursts by mutableStateOf(listOf<CoinBurst>()); private set
@@ -85,10 +87,23 @@ class GameEngine(val exercise: Exercise = Exercise.PushUps, firstBlockHealth: In
         val now = SystemClock.elapsedRealtime() / 1000.0
         val event = detector.process(frame, now)
         if (detector.state != tracking) tracking = detector.state
+        if (detector.isReady != isReady) isReady = detector.isReady
         updatePose(frame, now)
         updateCue()
-        if (event.justCharged) Haptics.charged()
+        // Charge feedback stays quiet before GO — setup movements are not gameplay.
+        if (event.justCharged && isAcceptingReps) Haptics.charged()
         if (event.repCompleted) registerRep(event.power)
+    }
+
+    /** Forgets any pre-start charge so the first counted rep must be a fresh down-and-up. */
+    fun clearCharge() = detector.clearCharge()
+
+    /** Re-runs the hold-at-top calibration from scratch (the Try Again action). */
+    fun recalibrate() {
+        Haptics.tap()
+        detector.reset()
+        tracking = detector.state
+        updateCue()
     }
 
     private fun updatePose(frame: PoseFrame, now: Double) {
@@ -105,11 +120,22 @@ class GameEngine(val exercise: Exercise = Exercise.PushUps, firstBlockHealth: In
     }
 
     private fun updateCue() {
-        val next = if (isCelebrating) CoachCue.Smashed else when (tracking.phase) {
-            RepPhase.Searching -> CoachCue.GetInFrame
-            RepPhase.Calibrating -> CoachCue.HoldTop
-            RepPhase.Top, RepPhase.Charging -> CoachCue.GoDown
-            RepPhase.Charged -> CoachCue.SmashIt
+        val next = when {
+            isCelebrating -> CoachCue.Smashed
+            // Before GO the only instruction is getting set up and holding it.
+            !isAcceptingReps -> when (tracking.phase) {
+                RepPhase.Searching -> CoachCue.GetInFrame
+                RepPhase.Calibrating -> CoachCue.HoldTop
+                RepPhase.NoArm -> CoachCue.AdjustPhone
+                RepPhase.Top, RepPhase.Charging, RepPhase.Charged -> CoachCue.HoldTop
+            }
+            else -> when (tracking.phase) {
+                RepPhase.Searching -> CoachCue.GetInFrame
+                RepPhase.Calibrating -> CoachCue.HoldTop
+                RepPhase.NoArm -> CoachCue.AdjustPhone
+                RepPhase.Top, RepPhase.Charging -> CoachCue.GoDown
+                RepPhase.Charged -> CoachCue.SmashIt
+            }
         }
         if (next != cue) cue = next
     }
