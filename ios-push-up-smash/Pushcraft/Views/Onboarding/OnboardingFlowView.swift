@@ -180,7 +180,16 @@ struct OnboardingFlowView: View {
 
         switch step {
         case .welcome:
-            WelcomeScreen(onStart: { model.advance(to: .meetGuide) }, onSignIn: { model.advance(to: .signIn) })
+            WelcomeScreen(
+                onStart: {
+                    TrackingPermission.requestIfNeeded()
+                    model.advance(to: .meetGuide)
+                },
+                onSignIn: {
+                    TrackingPermission.requestIfNeeded()
+                    model.advance(to: .signIn)
+                }
+            )
         case .signIn:
             ExistingAccountScreen(model: model)
         case .meetGuide:
