@@ -188,7 +188,7 @@ class AppState(private val context: Context) {
         val response = CredentialManager.create(context).getCredential(activity, request)
         val credential = response.credential
         if (credential is CustomCredential &&
-            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN
+            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
         ) {
             val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
             Backend.client.auth.signInWith(IDToken) {
