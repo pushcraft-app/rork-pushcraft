@@ -240,53 +240,32 @@ final class AppState {
 
     func signInWithGoogle() async {
         pendingAuthMethod = "google"
-        // Native account-picker first; the browser flow is the automatic fallback.
-        if GoogleSignInController.isConfigured {
-            do {
-                print("[Auth] Starting Google NATIVE sign in...")
-                let credentials = try await googleController.signIn()
-                isAuthenticating = true
-                defer { isAuthenticating = false }
-                _ = try await Backend.client.auth.signInWithIdToken(
-                    credentials: OpenIDConnectCredentials(
-                        provider: .google,
-                        idToken: credentials.idToken,
-                        nonce: credentials.nonce
-                    )
-                )
-                print("[Auth] Google NATIVE sign in succeeded")
-                return
-            } catch {
-                if GoogleSignInController.isCancellation(error) {
-                    print("[Auth] Google NATIVE sign in canceled by user")
-                    pendingAuthMethod = nil
-                    onboarding.awaitingSignUp = false
-                    return
-                }
-                print("[Auth] Google NATIVE sign in failed, falling back to browser flow: \(error.localizedDescription)")
-            }
+        guard GoogleSignInController.isConfigured else {
+            pendingAuthMethod = nil
+            authError = "Google sign-in isn't set up yet. Please try again later."
+            return
         }
-        await signInWithGoogleBrowser()
-    }
-
-    /// The original Supabase OAuth flow via the system browser.
-    private func signInWithGoogleBrowser() async {
         isAuthenticating = true
         defer { isAuthenticating = false }
         do {
-            print("[Auth] Starting Google sign in (Supabase OAuth)...")
-            try await Backend.client.auth.signInWithOAuth(provider: .google, redirectTo: Backend.authRedirectURL)
-            print("[Auth] Google sign in succeeded")
+            print("[Auth] Starting Google NATIVE sign in...")
+            let credentials = try await googleController.signIn()
+            _ = try await Backend.client.auth.signInWithIdToken(
+                credentials: OpenIDConnectCredentials(
+                    provider: .google,
+                    idToken: credentials.idToken,
+                    nonce: credentials.nonce
+                )
+            )
+            print("[Auth] Google NATIVE sign in succeeded")
         } catch {
             pendingAuthMethod = nil
             onboarding.awaitingSignUp = false
-            let nsError = error as NSError
-            if nsError.domain == ASWebAuthenticationSessionErrorDomain,
-               nsError.code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                print("[Auth] Google sign in canceled by user")
+            if GoogleSignInController.isCancellation(error) {
+                print("[Auth] Google NATIVE sign in canceled by user")
                 return
             }
-            print("[Auth] Google sign in failed: \(error.localizedDescription)")
+            print("[Auth] Google NATIVE sign in failed: \(error.localizedDescription)")
             authError = "Couldn't sign in with Google. Please try again."
         }
     }

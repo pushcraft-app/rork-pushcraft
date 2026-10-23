@@ -9,7 +9,6 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
-import com.tinochiwara.pushcraft.Config
 import com.tinochiwara.pushcraft.PushcraftApplication
 import com.tinochiwara.pushcraft.model.OnboardingAnswers
 import io.github.jan.supabase.auth.SignOutScope
@@ -146,28 +145,28 @@ class AppState(private val context: Context) {
 
     // MARK: - Sign-in
 
-    /** Native Google account-picker first; the browser flow is the automatic fallback. */
+    /** Native Google account-picker sheet; no browser fallback. */
     fun signInWithGoogle() {
         scope.launch {
             _isAuthenticating.value = true
             try {
                 nativeGoogleSignIn()
                 // The session observer clears the spinner once signed in.
-                return@launch
             } catch (e: GetCredentialCancellationException) {
                 Log.w("Auth", "Google native sign in canceled by user")
                 onboarding.awaitingSignUp = false
                 _isAuthenticating.value = false
-                return@launch
             } catch (e: Exception) {
-                Log.w("Auth", "Google native sign in failed, falling back to browser flow: ${e.message}")
+                Log.w("Auth", "Google native sign in failed: ${e.message}")
+                onboarding.awaitingSignUp = false
+                authError.value = "Couldn't sign in with Google. Please try again."
+                _isAuthenticating.value = false
             }
-            oauth("Google") { Backend.client.auth.signInWith(Google) }
         }
     }
 
     private suspend fun nativeGoogleSignIn() {
-        val serverClientId = Config.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+        val serverClientId = com.tinochiwara.pushcraft.BuildConfig.GOOGLE_WEB_CLIENT_ID
         require(serverClientId.isNotBlank()) { "Google web client ID is not configured" }
         val activity = (context as? PushcraftApplication)?.currentActivity
             ?: throw IllegalStateException("No foreground activity for the Google sheet")

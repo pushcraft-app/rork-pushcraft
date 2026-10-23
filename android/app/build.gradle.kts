@@ -15,6 +15,12 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
+
+        buildConfigField(
+            type = "String",
+            name = "GOOGLE_WEB_CLIENT_ID",
+            value = "\"1070586948869-t1i7v2uvph974ehecnrbpet9sbtcrhmh.apps.googleusercontent.com\""
+        )
     }
 
     buildTypes {
