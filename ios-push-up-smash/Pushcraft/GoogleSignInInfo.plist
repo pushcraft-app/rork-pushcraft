@@ -1,24 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!--
-    Partial Info.plist for Google Sign-In. Merged with the build-settings-
-    generated Info.plist (GENERATE_INFOPLIST_FILE = YES).
-
-    Replace both PLACEHOLDER values with the iOS OAuth client ID and its
-    dot-reversed form once the Google Cloud client is created:
-      - GIDClientID:           1234567890-abc123.apps.googleusercontent.com
-      - CFBundleURLSchemes[0]: com.googleusercontent.apps.1234567890-abc123
--->
+<!-- Partial Info.plist for Google Sign-In. Merged with the build-settings-
+     generated Info.plist (GENERATE_INFOPLIST_FILE = YES). -->
 <plist version="1.0">
 <dict>
 	<key>GIDClientID</key>
-	<string>PLACEHOLDER.apps.googleusercontent.com</string>
+	<string>1070586948869-gll1pkddn19hc7tub1htjjhbgo58mnau.apps.googleusercontent.com</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.googleusercontent.apps.PLACEHOLDER</string>
+				<string>com.googleusercontent.apps.1070586948869-gll1pkddn19hc7tub1htjjhbgo58mnau</string>
 			</array>
 		</dict>
 	</array>
