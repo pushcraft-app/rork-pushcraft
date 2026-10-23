@@ -92,5 +92,9 @@ dependencies {
 
     implementation(libs.revenuecat)
 
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.googleid)
+
     debugImplementation(libs.androidx.ui.tooling)
 }

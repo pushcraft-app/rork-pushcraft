@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		XX1E04EF6F5F7CE4B0B14CXX /* Mixpanel in Frameworks */ = {isa = PBXBuildFile; productRef = XX95C3572D390C41469060XX /* Mixpanel */; };
+		XX2CD292E57CBC38778425XX /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = XX23461835408C119587D3XX /* GoogleSignIn */; };
 		XXCB0C833A4E7DDE353CE0XX /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = XX17F496E7391AF4178246XX /* Supabase */; };
 		XXD63457E41125E77BACFDXX /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = XX8F6E1A701EA04CDCEA3DXX /* RevenueCat */; };
 /* End PBXBuildFile section */
@@ -61,6 +62,7 @@
 				XXCB0C833A4E7DDE353CE0XX /* Supabase in Frameworks */,
 				XXD63457E41125E77BACFDXX /* RevenueCat in Frameworks */,
 				XX1E04EF6F5F7CE4B0B14CXX /* Mixpanel in Frameworks */,
+				XX2CD292E57CBC38778425XX /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -124,6 +126,7 @@
 				XX17F496E7391AF4178246XX /* Supabase */,
 				XX8F6E1A701EA04CDCEA3DXX /* RevenueCat */,
 				XX95C3572D390C41469060XX /* Mixpanel */,
+				XX23461835408C119587D3XX /* GoogleSignIn */,
 			);
 			productName = Pushcraft;
 			productReference = 105FC57A2E9EAD3100EA8BCF /* Pushcraft.app */;
@@ -220,6 +223,7 @@
 				XXA26CCC1C14E04A80BED3XX /* XCRemoteSwiftPackageReference "supabase-swift" */,
 				XX56D7F10BAEE1D3529BF9XX /* XCRemoteSwiftPackageReference "purchases-ios-spm" */,
 				XXCAB5546C51F3718D7887XX /* XCRemoteSwiftPackageReference "mixpanel-swift" */,
+				XX8622D3A66BB2CC6CC6D6XX /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 			);
 		};
 /* End PBXProject section */
@@ -418,6 +422,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pushcraft/GoogleSignInInfo.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pushcraft uses the camera to track your body so your push-ups and sit-ups can smash blocks. Video never leaves your phone.";
 				INFOPLIST_KEY_NSUserTrackingUsageDescription = "Your data helps us understand how Pushcraft is used, so we can improve workouts and features.";
@@ -455,6 +460,7 @@
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Pushcraft/GoogleSignInInfo.plist;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Pushcraft uses the camera to track your body so your push-ups and sit-ups can smash blocks. Video never leaves your phone.";
 				INFOPLIST_KEY_NSUserTrackingUsageDescription = "Your data helps us understand how Pushcraft is used, so we can improve workouts and features.";
@@ -615,6 +621,14 @@
 				minimumVersion = 5.0.0;
 			};
 		};
+		XX8622D3A66BB2CC6CC6D6XX /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.0.0;
+			};
+		};
 		XXA26CCC1C14E04A80BED3XX /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/supabase/supabase-swift.git";
@@ -638,6 +652,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = XXA26CCC1C14E04A80BED3XX /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		XX23461835408C119587D3XX /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = XX8622D3A66BB2CC6CC6D6XX /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 		XX8F6E1A701EA04CDCEA3DXX /* RevenueCat */ = {
 			isa = XCSwiftPackageProductDependency;

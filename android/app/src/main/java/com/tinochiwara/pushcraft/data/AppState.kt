@@ -1,12 +1,22 @@
 package com.tinochiwara.pushcraft.data
 
+import android.app.Activity
 import android.content.Context
 import android.util.Log
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.tinochiwara.pushcraft.Config
+import com.tinochiwara.pushcraft.PushcraftApplication
 import com.tinochiwara.pushcraft.model.OnboardingAnswers
 import io.github.jan.supabase.auth.SignOutScope
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.Apple
 import io.github.jan.supabase.auth.providers.Google
+import io.github.jan.supabase.auth.providers.builtin.IDToken
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.functions.functions
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +28,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.security.MessageDigest
+import java.util.UUID
 
 /** App-level session: Supabase auth state plus the per-account stores. */
 class AppState(private val context: Context) {
@@ -132,9 +144,63 @@ class AppState(private val context: Context) {
         runCatching { battles.load() }
     }
 
-    // MARK: - Sign-in (Supabase OAuth via Custom Tabs)
+    // MARK: - Sign-in
 
-    fun signInWithGoogle() = oauth("Google") { Backend.client.auth.signInWith(Google) }
+    /** Native Google account-picker first; the browser flow is the automatic fallback. */
+    fun signInWithGoogle() {
+        scope.launch {
+            _isAuthenticating.value = true
+            try {
+                nativeGoogleSignIn()
+                // The session observer clears the spinner once signed in.
+                return@launch
+            } catch (e: GetCredentialCancellationException) {
+                Log.w("Auth", "Google native sign in canceled by user")
+                onboarding.awaitingSignUp = false
+                _isAuthenticating.value = false
+                return@launch
+            } catch (e: Exception) {
+                Log.w("Auth", "Google native sign in failed, falling back to browser flow: ${e.message}")
+            }
+            oauth("Google") { Backend.client.auth.signInWith(Google) }
+        }
+    }
+
+    private suspend fun nativeGoogleSignIn() {
+        val serverClientId = Config.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+        require(serverClientId.isNotBlank()) { "Google web client ID is not configured" }
+        val activity = (context as? PushcraftApplication)?.currentActivity
+            ?: throw IllegalStateException("No foreground activity for the Google sheet")
+
+        // Google receives the SHA-256 hash; Supabase receives the raw nonce
+        // and compares its own hash against the token's `nonce` claim.
+        val rawNonce = UUID.randomUUID().toString()
+        val hashedNonce = MessageDigest.getInstance("SHA-256")
+            .digest(rawNonce.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+        val googleIdOption = GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(false)
+            .setServerClientId(serverClientId)
+            .setNonce(hashedNonce)
+            .build()
+        val request = GetCredentialRequest.Builder().addCredentialOption(googleIdOption).build()
+        val response = CredentialManager.create(context).getCredential(activity, request)
+        val credential = response.credential
+        if (credential is CustomCredential &&
+            credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN
+        ) {
+            val idToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+            Backend.client.auth.signInWith(IDToken) {
+                this.idToken = idToken
+                provider = Google
+                nonce = rawNonce
+            }
+        } else {
+            throw IllegalStateException("Unexpected credential type: ${credential.type}")
+        }
+    }
+
     fun signInWithApple() = oauth("Apple") { Backend.client.auth.signInWith(Apple) }
 
     private fun oauth(name: String, block: suspend () -> Unit) {

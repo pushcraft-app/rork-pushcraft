@@ -28,6 +28,7 @@ final class AppState {
     @ObservationIgnored private var listenTask: Task<Void, Never>?
     @ObservationIgnored private var currentNonce: String?
     @ObservationIgnored private let appleController = AppleSignInController()
+    @ObservationIgnored private let googleController = GoogleSignInController()
     /// Provider of the auth flow in progress ("apple"/"google"), for analytics.
     @ObservationIgnored private var pendingAuthMethod: String?
 
@@ -238,9 +239,40 @@ final class AppState {
     // MARK: - Google
 
     func signInWithGoogle() async {
+        pendingAuthMethod = "google"
+        // Native account-picker first; the browser flow is the automatic fallback.
+        if GoogleSignInController.isConfigured {
+            do {
+                print("[Auth] Starting Google NATIVE sign in...")
+                let credentials = try await googleController.signIn()
+                isAuthenticating = true
+                defer { isAuthenticating = false }
+                _ = try await Backend.client.auth.signInWithIdToken(
+                    credentials: OpenIDConnectCredentials(
+                        provider: .google,
+                        idToken: credentials.idToken,
+                        nonce: credentials.nonce
+                    )
+                )
+                print("[Auth] Google NATIVE sign in succeeded")
+                return
+            } catch {
+                if GoogleSignInController.isCancellation(error) {
+                    print("[Auth] Google NATIVE sign in canceled by user")
+                    pendingAuthMethod = nil
+                    onboarding.awaitingSignUp = false
+                    return
+                }
+                print("[Auth] Google NATIVE sign in failed, falling back to browser flow: \(error.localizedDescription)")
+            }
+        }
+        await signInWithGoogleBrowser()
+    }
+
+    /// The original Supabase OAuth flow via the system browser.
+    private func signInWithGoogleBrowser() async {
         isAuthenticating = true
         defer { isAuthenticating = false }
-        pendingAuthMethod = "google"
         do {
             print("[Auth] Starting Google sign in (Supabase OAuth)...")
             try await Backend.client.auth.signInWithOAuth(provider: .google, redirectTo: Backend.authRedirectURL)
