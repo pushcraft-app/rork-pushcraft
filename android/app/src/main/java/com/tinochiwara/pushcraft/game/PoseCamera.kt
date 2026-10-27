@@ -58,7 +58,11 @@ private fun toFrame(pose: Pose, width: Int, height: Int, mirror: Boolean): PoseF
     val joints = mutableMapOf<Joint, Offset>()
     for ((type, joint) in landmarkMap) {
         val lm = pose.getPoseLandmark(type) ?: continue
-        if (lm.inFrameLikelihood < 0.5f) continue
+        // Match the iOS confidence floor (0.25). ML Kit's inFrameLikelihood is
+        // conservative under motion blur, so a 0.5 cutoff drops the
+        // shoulders/neck while the user moves and freezes the detector on its
+        // last state (e.g. a full-gold charge bar).
+        if (lm.inFrameLikelihood < 0.25f) continue
         val x = lm.position.x / width
         val y = lm.position.y / height
         joints[joint] = Offset(if (mirror) 1f - x else x, y)

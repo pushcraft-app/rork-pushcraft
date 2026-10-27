@@ -98,6 +98,7 @@ private data class Reveal(val towerId: String, val towerName: String, val stage:
 /** Full-screen container: arena → results → stage reveal. */
 @Composable
 fun WorkoutFlowScreen(session: ActiveSession, appState: AppState, onClose: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var finished by remember { mutableStateOf<Pair<Int, SubmitState>?>(null) }
     var reveal by remember { mutableStateOf<Reveal?>(null) }
     var showReveal by remember { mutableStateOf(false) }
@@ -121,6 +122,11 @@ fun WorkoutFlowScreen(session: ActiveSession, appState: AppState, onClose: () ->
                         val state = appState.workouts.finish(session.id, reps, blocks, reason)
                         finished = reps to state
                         reveal = prepareReveal(state)
+                        // One-time Play review prompt after the first fully
+                        // completed session (mirrors the iOS build).
+                        if ((state as? SubmitState.Saved)?.outcome?.isCompleted == true) {
+                            com.tinochiwara.pushcraft.data.ReviewPrompt.request(context)
+                        }
                     }
                 }
             }

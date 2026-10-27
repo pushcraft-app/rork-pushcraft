@@ -110,5 +110,8 @@ dependencies {
     implementation(libs.androidx.credentials.play.services.auth)
     implementation(libs.googleid)
 
+    implementation(libs.play.review)
+    implementation(libs.play.review.ktx)
+
     debugImplementation(libs.androidx.ui.tooling)
 }

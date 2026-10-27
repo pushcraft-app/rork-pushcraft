@@ -53,6 +53,11 @@ object AppPreferences {
         get() = prefs.getBoolean("prefs.progressTip", false)
         set(value) = prefs.edit().putBoolean("prefs.progressTip", value).apply()
 
+    /** One-time store review prompt (first completed workout / onboarding result). */
+    var hasAskedStoreReview: Boolean
+        get() = prefs.getBoolean("prefs.storeReview", false)
+        set(value) = prefs.edit().putBoolean("prefs.storeReview", value).apply()
+
     val reminderTimeText: String
         get() = LocalTime.of(reminderMinutes / 60, reminderMinutes % 60)
             .format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))

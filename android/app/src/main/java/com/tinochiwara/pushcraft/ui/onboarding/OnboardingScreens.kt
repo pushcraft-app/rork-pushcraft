@@ -101,6 +101,7 @@ import com.tinochiwara.pushcraft.data.Haptics
 import com.tinochiwara.pushcraft.data.OnboardingModel
 import com.tinochiwara.pushcraft.data.OnboardingStep
 import com.tinochiwara.pushcraft.data.Reminders
+import com.tinochiwara.pushcraft.data.ReviewPrompt
 import com.tinochiwara.pushcraft.model.HeightUnit
 import com.tinochiwara.pushcraft.model.OnboardingChoice
 import com.tinochiwara.pushcraft.model.Weekday
@@ -557,11 +558,17 @@ fun TowerJourneyScreen(onReady: () -> Unit) {
                     painterResource(R.drawable.onboarding_journey_bg), null, contentScale = ContentScale.FillBounds,
                     modifier = Modifier.offset(ox.toDp(), oy.toDp()).size(dw.toDp(), dh.toDp())
                 )
+                // Center the badge on the painted "START HERE" plaque at
+                // (0.299, 0.798) of the artwork — same point as the iOS build.
                 val bw = dw * 0.36f
-                StartHereBadge(
-                    OnboardingModel.FIRST_TOWER_NAME, bw.toDp(),
-                    Modifier.offset((ox + dw * 0.299f - bw / 2).toDp(), (oy + dh * 0.798f - bw * 0.2f).toDp())
-                )
+                Box(
+                    Modifier
+                        .offset((ox + dw * 0.299f - bw / 2).toDp(), (oy + dh * 0.798f - bw / 2).toDp())
+                        .size(bw.toDp()),
+                    contentAlignment = Alignment.Center
+                ) {
+                    StartHereBadge(OnboardingModel.FIRST_TOWER_NAME, bw.toDp())
+                }
             }
         }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Pc.obNavyDeep.copy(alpha = 0.75f), 0.38f to Color.Transparent)))
@@ -688,10 +695,14 @@ fun FirstRewardScreen(model: OnboardingModel) {
     var built by remember { mutableStateOf(false) }
     var bubble by remember { mutableStateOf(false) }
     val sparkle = remember { Animatable(0f) }
+    val context = LocalContext.current
     LaunchedEffect(Unit) {
         delay(500); Haptics.thud(); built = true
         launch { delay(400); sparkle.animateTo(1f, tween(1200)) }
         delay(700); bubble = true
+        // One-time Play review prompt on the onboarding result screen,
+        // timed like the iOS build's request after the reveal settles.
+        delay(1800); ReviewPrompt.request(context)
     }
     val b by animateFloatAsState(if (built) 1f else 0f, tween(1100), label = "b")
     val reps = model.introRepsDone ?: 0

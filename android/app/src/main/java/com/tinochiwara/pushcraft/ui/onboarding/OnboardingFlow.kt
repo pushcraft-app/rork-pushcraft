@@ -129,7 +129,7 @@ fun OnboardingFlow(appState: AppState) {
             label = "onboarding"
         ) { s ->
             Box(Modifier.fillMaxSize().then(if (s != Welcome && s != IntroWorkout) Modifier.statusBarsPadding().padding(top = 50.dp) else Modifier)) {
-                Screen(s, appState)
+                Screen(s, appState) { ctaVisible = true }
             }
         }
         if (showsTopBar) {
@@ -157,7 +157,7 @@ fun OnboardingFlow(appState: AppState) {
 }
 
 @Composable
-private fun Screen(step: OnboardingStep, appState: AppState) {
+private fun Screen(step: OnboardingStep, appState: AppState, onReady: () -> Unit = {}) {
     val model = appState.onboarding
     when (step) {
         Welcome -> WelcomeScreen({ model.advance(MeetGuide) }, { model.advance(SignIn) })
@@ -173,8 +173,8 @@ private fun Screen(step: OnboardingStep, appState: AppState) {
         Boredom -> StatementScreen("Does this sound like you?", "I start motivated, but ordinary workouts get boring.", Agreement.entries, model.boredom) { model.boredom = it }
         Equipment -> StatementScreen("Does this get in your way?", "Getting to a gym or finding equipment makes exercise harder to fit in.", Agreement.entries, model.equipment) { model.equipment = it }
         SeeingProgress -> StatementScreen("What about this?", "It's harder to stay consistent when I can't see my progress.", Agreement.entries, model.seeingProgress) { model.seeingProgress = it }
-        Journey -> TowerJourneyScreen {}
-        HowBuild -> HowBuildScreen {}
+        Journey -> TowerJourneyScreen(onReady)
+        HowBuild -> HowBuildScreen(onReady)
         OnboardingStep.PushupCapacity -> SingleChoiceScreen(
             "How many push-ups can you comfortably do in one set?", "An estimate is fine. You don't need to test your maximum.",
             com.tinochiwara.pushcraft.model.PushupCapacity.entries, model.pushupCapacity
