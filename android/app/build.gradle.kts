@@ -21,6 +21,14 @@ android {
             name = "GOOGLE_WEB_CLIENT_ID",
             value = "\"1070586948869-t1i7v2uvph974ehecnrbpet9sbtcrhmh.apps.googleusercontent.com\""
         )
+
+        // RevenueCat Google Play production SDK key (Test Store key must not
+        // be used with Play Billing in release builds).
+        buildConfigField(
+            type = "String",
+            name = "GOOGLE_PLAY_REVENUECAT_API_KEY",
+            value = "\"goog_mwPOBTRRNRJSijyJiesxSqWEPlu\""
+        )
     }
 
     buildTypes {

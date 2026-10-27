@@ -25,11 +25,12 @@ class PushcraftApplication : Application() {
         AppPreferences.init(this)
         Haptics.init(this)
         SoundService.init(this)
-        val key = Config.EXPO_PUBLIC_REVENUECAT_TEST_API_KEY
-        if (key.isNotBlank()) {
-            Purchases.logLevel = LogLevel.WARN
-            Purchases.configure(PurchasesConfiguration.Builder(this, key).build())
-        }
+        // RevenueCat uses the Google Play production key; the Test Store key
+        // must never be used here (it breaks release builds with Play Billing).
+        Purchases.logLevel = LogLevel.WARN
+        Purchases.configure(
+            PurchasesConfiguration.Builder(this, BuildConfig.GOOGLE_PLAY_REVENUECAT_API_KEY).build()
+        )
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 currentActivity = activity
