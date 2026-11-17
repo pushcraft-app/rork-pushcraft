@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -87,12 +88,16 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.tinochiwara.pushcraft.R
@@ -180,14 +185,108 @@ fun AuthButtons(appState: AppState, onStart: () -> Unit = {}) {
     }
 }
 
+// MARK: - Hidden reviewer login
+
+private const val REVIEWER_TAPS = 5
+private const val REVIEWER_TAP_WINDOW_MS = 2000L
+
+/** Screen title that reveals the reviewer email form after 5 quick taps. */
+@Composable
+fun ReviewerTitle(text: String, modifier: Modifier = Modifier, onReveal: () -> Unit) {
+    var taps by remember { mutableStateOf(0) }
+    var windowStart by remember { mutableStateOf(0L) }
+    Text(
+        text, style = serif(32), color = Pc.ivory, modifier = modifier.pointerInput(Unit) {
+            detectTapGestures(onTap = {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - windowStart > REVIEWER_TAP_WINDOW_MS) taps = 0
+                windowStart = now
+                if (++taps >= REVIEWER_TAPS) {
+                    taps = 0
+                    Haptics.warning()
+                    onReveal()
+                }
+            })
+        }
+    )
+}
+
+@Composable
+private fun ReviewerField(
+    value: String,
+    onChange: (String) -> Unit,
+    hint: String,
+    hide: Boolean,
+    onDone: () -> Unit
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Box(
+        Modifier.fillMaxWidth().height(56.dp).background(Pc.obCard, shape)
+            .border(1.dp, Pc.obCardBorder, shape)
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (value.isEmpty()) {
+            Text(hint, style = rounded(16, FontWeight.SemiBold), color = Pc.mist.copy(alpha = 0.6f))
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            visualTransformation = if (hide) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = if (hide) KeyboardType.Password else KeyboardType.Email,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(onDone = { onDone() }),
+            textStyle = rounded(16, FontWeight.SemiBold).copy(color = Pc.ivory),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+/** Hidden email + password sign-in for store reviewers (no device linking). */
+@Composable
+fun ReviewerEmailAuth(appState: AppState) {
+    val busy by appState.isAuthenticating.collectAsState()
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val shape = RoundedCornerShape(18.dp)
+    val submit = { if (email.isNotBlank() && password.isNotBlank()) appState.signInWithEmail(email, password) }
+    Column(
+        Modifier.fillMaxWidth().alpha(if (busy) 0.55f else 1f),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        ReviewerField(email, { email = it }, "Email", hide = false, onDone = submit)
+        ReviewerField(password, { password = it }, "Password", hide = true, onDone = submit)
+        Row(
+            Modifier.fillMaxWidth().height(56.dp)
+                .background(Brush.verticalGradient(listOf(Pc.amberSoft, Pc.amberDeep)), shape)
+                .pressScale(!busy) { submit() },
+            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (busy) {
+                CircularProgressIndicator(Modifier.size(22.dp), color = Pc.obNavy, strokeWidth = 2.5.dp)
+            } else {
+                Text("Sign in", style = sans(18, FontWeight.Bold), color = Pc.obNavy)
+            }
+        }
+    }
+}
+
 @Composable
 fun ExistingAccountScreen(appState: AppState) {
     LaunchedEffect(Unit) { appState.onboarding.awaitingSignUp = false }
+    var showReviewer by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp).navigationBarsPadding().padding(bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Spacer(Modifier.height(12.dp).weight(0.3f))
         Image(painterResource(R.drawable.golem), null, Modifier.height(230.dp))
-        Text("Welcome back", style = serif(32), color = Pc.ivory, modifier = Modifier.padding(top = 18.dp))
+        ReviewerTitle("Welcome back", Modifier.padding(top = 18.dp)) { showReviewer = true }
         Text("Sign in to keep building your towers.", style = rounded(16, FontWeight.Medium), color = Pc.mist, modifier = Modifier.padding(top = 6.dp))
+        if (showReviewer) {
+            Spacer(Modifier.height(14.dp))
+            ReviewerEmailAuth(appState)
+        }
         Spacer(Modifier.weight(1f))
         AuthButtons(appState)
         Spacer(Modifier.height(14.dp))
@@ -837,6 +936,7 @@ private fun ForecastGraph(endLabel: String) {
 @Composable
 fun SaveProgressScreen(appState: AppState) {
     val model = appState.onboarding
+    var showReviewer by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().navigationBarsPadding()) {
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
@@ -849,13 +949,14 @@ fun SaveProgressScreen(appState: AppState) {
                 )
                 Image(painterResource(R.drawable.golem), null, Modifier.size(170.dp).align(Alignment.BottomStart).offset(y = 10.dp))
             }
-            Text("Save your progress", style = serif(32), color = Pc.ivory, textAlign = TextAlign.Center)
+            ReviewerTitle("Save your progress", Modifier.padding(top = 8.dp)) { showReviewer = true }
             Text(
                 if (model.didIntroWorkout) "Keep your tower progress and continue your journey." else "Save your starting goal and begin your journey.",
                 style = rounded(17, FontWeight.Medium), color = Pc.mist, textAlign = TextAlign.Center
             )
         }
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (showReviewer) ReviewerEmailAuth(appState)
             AuthButtons(appState) { model.awaitingSignUp = true }
             LegalLine()
         }

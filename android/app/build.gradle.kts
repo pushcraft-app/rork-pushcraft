@@ -13,7 +13,11 @@ android {
         applicationId = "com.tinochiwara.pushcraft"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // Fixed anchor, NOT the publish pipeline's timestamp stamping: Play caps
+        // versionCode at 2,100,000,000 and a seconds-epoch code would hit that
+        // around 2036. Bump by 1 per release; 1,900,000,000 clears the first
+        // timestamped upload (1793078301) with ~200M updates of headroom.
+        versionCode = 1_900_000_000
         versionName = "1.0.0"
 
         buildConfigField(

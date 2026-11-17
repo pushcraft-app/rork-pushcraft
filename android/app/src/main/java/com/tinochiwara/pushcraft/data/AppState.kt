@@ -165,6 +165,26 @@ class AppState(private val context: Context) {
         }
     }
 
+    /** Hidden reviewer path: standard email + password, no device linking. */
+    fun signInWithEmail(email: String, password: String) {
+        scope.launch {
+            _isAuthenticating.value = true
+            try {
+                Backend.client.auth.signInWith(io.github.jan.supabase.auth.providers.builtin.Email) {
+                    this.email = email.trim()
+                    this.password = password
+                }
+                // The session observer flips the phase and starts the
+                // RevenueCat / bootstrap work once the session is live.
+            } catch (e: Exception) {
+                Log.w("Auth", "Email sign in failed: ${e.message}")
+                onboarding.awaitingSignUp = false
+                authError.value = "Couldn't sign in. Check the email and password and try again."
+                _isAuthenticating.value = false
+            }
+        }
+    }
+
     private suspend fun nativeGoogleSignIn() {
         val serverClientId = com.tinochiwara.pushcraft.BuildConfig.GOOGLE_WEB_CLIENT_ID
         require(serverClientId.isNotBlank()) { "Google web client ID is not configured" }
