@@ -136,13 +136,14 @@ fun BattlesScreen(appState: AppState, nav: NavController, modifier: Modifier = M
     var creating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var exercise by remember { mutableStateOf(Exercise.PushUps) }
+    var rawBattle by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val invitation = battles.invitation
 
     LaunchedEffect(Unit) {
         if (!hasLoaded) runCatching { appState.battles.load() }
-        appState.battles.battles.value.invitation?.let { exercise = it.exercise }
+        appState.battles.battles.value.invitation?.let { exercise = it.exercise; rawBattle = it.raw }
     }
     LaunchedEffect(copied) { if (copied) { delay(1800); copied = false } }
 
@@ -194,6 +195,27 @@ fun BattlesScreen(appState: AppState, nav: NavController, modifier: Modifier = M
                                 }
                             }
                         }
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SectionLabel("FORMAT")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(false to "Block smashing", true to "Raw push-ups").forEach { (raw, label) ->
+                                    val sel = rawBattle == raw
+                                    val shape = RoundedCornerShape(12.dp)
+                                    Box(
+                                        Modifier.weight(1f).height(40.dp)
+                                            .background(if (sel) AmberGradient else SolidColor(Color.White.copy(alpha = 0.06f)), shape)
+                                            .border(1.dp, Color.White.copy(alpha = if (sel) 0f else 0.14f), shape)
+                                            .pressScale { rawBattle = raw },
+                                        contentAlignment = Alignment.Center
+                                    ) { Text(label, style = rounded(14, FontWeight.Bold), color = if (sel) Pc.buttonInk else Pc.mist) }
+                                }
+                            }
+                            Text(
+                                if (rawBattle) "No blocks — just reps. Most reps wins, same rewards."
+                                else "Smash blocks with your reps and build your tower after.",
+                                style = rounded(12, FontWeight.Medium), color = Pc.mist.copy(alpha = 0.8f)
+                            )
+                        }
                         if (invitation != null) {
                             Row(Modifier.fillMaxWidth().height(54.dp).recessed().padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 SectionLabel("BATTLE CODE")
@@ -215,7 +237,7 @@ fun BattlesScreen(appState: AppState, nav: NavController, modifier: Modifier = M
                             if (creating) return@GoldButton
                             creating = true
                             scope.launch {
-                                try { shareBattle(context, appState.battles.createInvitation(exercise)) } catch (e: Exception) { error = e.message } finally { creating = false }
+                                try { shareBattle(context, appState.battles.createInvitation(exercise, rawBattle)) } catch (e: Exception) { error = e.message } finally { creating = false }
                             }
                         }
                         Text(
@@ -319,7 +341,7 @@ private fun ActiveBattleCard(b: Battle, onClick: () -> Unit) {
         BattleAvatar(b.opponentName, b.opponentAvatarPath)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(b.opponentName ?: "Waiting for opponent", style = rounded(17, FontWeight.Bold), color = Pc.ivory, maxLines = 1)
-            Text(b.exercise.challengeTitle, style = rounded(13, FontWeight.Medium), color = Pc.mist, maxLines = 1)
+            Text(if (b.raw) "${b.exercise.challengeTitle} · Raw" else b.exercise.challengeTitle, style = rounded(13, FontWeight.Medium), color = Pc.mist, maxLines = 1)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(b.statusText, style = rounded(12, FontWeight.Bold), color = if (b.phase == BattlePhase.Waiting) Pc.amberSoft else Pc.progressCyan)
                 val deadline = if (b.phase == BattlePhase.Waiting) b.inviteExpiresAt else b.deadlineAt
@@ -410,6 +432,11 @@ fun BattleDetailsScreen(appState: AppState, battleId: String, nav: NavController
             Text(
                 "Both players perform ${battle.exercise.unitName}. One run each, camera counted. Reach 30 reps to also earn XP and a streak day.",
                 style = rounded(12, FontWeight.Bold), color = Pc.progressCyan
+            )
+            Text(
+                if (battle.raw) "RAW PUSH-UPS · no blocks, most reps wins"
+                else "BLOCK SMASHING · your reps smash blocks and build your tower",
+                style = rounded(11, FontWeight.Bold, 1.6f), color = Pc.amberSoft
             )
         }
         Column(Modifier.fillMaxWidth().battleCard().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {

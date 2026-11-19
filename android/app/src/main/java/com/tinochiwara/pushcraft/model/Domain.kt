@@ -131,6 +131,8 @@ data class Battle(
     val isHost: Boolean,
     val createdDate: Instant,
     val exercise: Exercise,
+    /** Raw battles play without the block; the higher rep count wins. */
+    val raw: Boolean = false,
     val phase: BattlePhase,
     val opponentName: String?,
     val opponentAvatarPath: String?,
@@ -180,6 +182,7 @@ data class Battle(
                 isHost = dto.isHost,
                 createdDate = created,
                 exercise = Exercise.fromServer(dto.exercise) ?: Exercise.PushUps,
+                raw = dto.mode == "raw",
                 phase = phase,
                 opponentName = dto.opponent?.displayName,
                 opponentAvatarPath = dto.opponent?.avatarPath,

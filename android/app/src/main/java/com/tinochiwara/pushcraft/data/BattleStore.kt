@@ -65,8 +65,14 @@ class BattleStore {
         }
     }
 
-    suspend fun createInvitation(exercise: Exercise): Battle = mutate {
-        Backend.rpcDecode<BattleDTO>("create_battle", buildJsonObject { put("p_exercise", exercise.serverValue) })
+    suspend fun createInvitation(exercise: Exercise, raw: Boolean = false): Battle = mutate {
+        Backend.rpcDecode<BattleDTO>(
+            "create_battle",
+            buildJsonObject {
+                put("p_exercise", exercise.serverValue)
+                put("p_mode", if (raw) "raw" else "blocks")
+            }
+        )
     }
 
     suspend fun join(code: String): Battle = mutate {

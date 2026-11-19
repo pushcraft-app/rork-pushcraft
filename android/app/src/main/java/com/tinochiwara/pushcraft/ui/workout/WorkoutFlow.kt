@@ -121,7 +121,11 @@ fun WorkoutFlowScreen(session: ActiveSession, appState: AppState, onClose: () ->
                     scope.launch {
                         val state = appState.workouts.finish(session.id, reps, blocks, reason)
                         finished = reps to state
-                        reveal = prepareReveal(state)
+                        // Raw battles skip the tower-build reveal; reps still
+                        // save to the tower on the server exactly as before.
+                        val rawBattle = session.battleId != null &&
+                            appState.battles.battle(session.battleId)?.raw == true
+                        reveal = if (rawBattle) null else prepareReveal(state)
                         // One-time Play review prompt after the first fully
                         // completed session (mirrors the iOS build).
                         if ((state as? SubmitState.Saved)?.outcome?.isCompleted == true) {

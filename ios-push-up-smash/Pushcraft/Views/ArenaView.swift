@@ -79,9 +79,11 @@ struct ArenaView: View {
 
             hud
 
-            EffectsOverlay(engine: engine)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+            if !isRawBattle {
+                EffectsOverlay(engine: engine)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
 
             if session.isBattle && battleStage == .waiting {
                 BattleWaitingOverlay(
@@ -470,8 +472,12 @@ struct ArenaView: View {
                 .padding(.top, 10)
             }
 
-            blockStage
-                .padding(.top, 14)
+            // Raw battles play without the block: the stage stays empty and
+            // the rep race carries the screen. Everything else is identical.
+            if !isRawBattle {
+                blockStage
+                    .padding(.top, 14)
+            }
 
             Spacer(minLength: 12)
 
@@ -629,6 +635,8 @@ struct ArenaView: View {
     private var battle: Battle? {
         session.battleID.flatMap { appState.battles.battle(withID: $0) }
     }
+
+    private var isRawBattle: Bool { battle?.isRaw ?? false }
 }
 
 // MARK: - Block entrance / shatter

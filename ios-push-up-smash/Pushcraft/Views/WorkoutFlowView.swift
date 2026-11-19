@@ -68,6 +68,10 @@ struct WorkoutFlowView: View {
         .interactiveDismissDisabled()
     }
 
+    private var isRawBattle: Bool {
+        session.battleID.flatMap { appState.battles.battle(withID: $0) }?.isRaw ?? false
+    }
+
     private func handleEnd(reps: Int, blocks: Int, reason: WorkoutEndReason) {
         // A regular workout left with no reps has nothing to save.
         if reps == 0 && !session.isBattle {
@@ -79,7 +83,11 @@ struct WorkoutFlowView: View {
         Task {
             let state = await appState.workouts.finish(id: session.id, reps: reps, blocks: blocks, reason: reason)
             finished?.state = state
-            prepareRevealIfStageCompleted(state: state)
+            // Raw battles skip the tower-build reveal; reps still save to the
+            // tower on the server exactly as before.
+            if !(session.isBattle && isRawBattle) {
+                prepareRevealIfStageCompleted(state: state)
+            }
             requestReviewIfFirstCompleted(state: state)
         }
     }

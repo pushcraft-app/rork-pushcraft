@@ -121,7 +121,7 @@ fun KeepScreenOn() {
 
 /** Camera feed, skeleton, effects and the gradient scrims shared by arena screens. */
 @Composable
-fun ArenaBackdrop(engine: GameEngine, hud: @Composable () -> Unit) {
+fun ArenaBackdrop(engine: GameEngine, showEffects: Boolean = true, hud: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         PoseCameraView(engine, Modifier.fillMaxSize())
         Box(
@@ -134,7 +134,7 @@ fun ArenaBackdrop(engine: GameEngine, hud: @Composable () -> Unit) {
         )
         SkeletonView(engine.pose, Modifier.fillMaxSize().onGloballyPositioned { engine.screenSize = Size(it.size.width.toFloat(), it.size.height.toFloat()) })
         hud()
-        EffectsOverlay(engine, Modifier.fillMaxSize())
+        if (showEffects) EffectsOverlay(engine, Modifier.fillMaxSize())
     }
 }
 
@@ -447,7 +447,7 @@ fun ArenaScreen(
         else if (engine.reps == 0) end(WorkoutEndReason.Finished) else confirmEnd = true
     }
 
-    ArenaBackdrop(engine) {
+    ArenaBackdrop(engine, showEffects = battle?.raw != true) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             if (!session.isBattle) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 run {
@@ -493,7 +493,11 @@ fun ArenaScreen(
                     }
                 }
             }
-            Box(Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) { BlockStage(engine, 150f) }
+            // Raw battles play without the block: the stage stays empty and
+            // the rep race carries the screen. Everything else is identical.
+            Box(Modifier.fillMaxWidth().padding(top = 14.dp), contentAlignment = Alignment.Center) {
+                if (battle?.raw != true) BlockStage(engine, 150f)
+            }
             Spacer(Modifier.weight(1f))
             Column(Modifier.padding(bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 DepthMeter(engine.tracking, preStart = !engine.isAcceptingReps, isReady = engine.isReady, modifier = Modifier.padding(horizontal = 40.dp))

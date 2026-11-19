@@ -65,10 +65,13 @@ final class BattleStore {
     }
 
     /// Creates the host's invitation, or reuses the waiting one with the chosen exercise.
-    func createInvitation(exercise: Exercise) async throws -> Battle {
+    func createInvitation(exercise: Exercise, isRaw: Bool = false) async throws -> Battle {
         do {
             let dto: BattleDTO = try await Backend.client
-                .rpc("create_battle", params: ExerciseParams(exercise: exercise.serverValue))
+                .rpc(
+                    "create_battle",
+                    params: ExerciseParams(exercise: exercise.serverValue, p_mode: isRaw ? "raw" : "blocks")
+                )
                 .execute()
                 .value
             return upsert(Battle(dto: dto))

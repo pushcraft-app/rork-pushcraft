@@ -20,6 +20,7 @@ struct BattlesView: View {
     @State private var isCreating = false
     @State private var errorMessage: String?
     @State private var battleExercise: Exercise = .pushUps
+    @State private var battleIsRaw = false
 
     // Shared state
     @State private var showCopiedToast = false
@@ -73,7 +74,10 @@ struct BattlesView: View {
             }
             .task {
                 if !store.hasLoaded { try? await store.load() }
-                if let invitation = store.invitation { battleExercise = invitation.exercise }
+                if let invitation = store.invitation {
+                    battleExercise = invitation.exercise
+                    battleIsRaw = invitation.isRaw
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -172,6 +176,8 @@ struct BattlesView: View {
 
             exercisePicker
 
+            formatPicker
+
             if let invitation = store.invitation {
                 codeRow(invitation)
             }
@@ -206,6 +212,58 @@ struct BattlesView: View {
                 exerciseChip(.sitUps)
             }
         }
+    }
+
+    /// Hosts pick the format: the classic block-smashing run or a raw rep
+    /// race with no blocks — most reps wins, same rewards.
+    private var formatPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("FORMAT")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .tracking(1.6)
+                .foregroundStyle(Theme.mist)
+
+            HStack(spacing: 8) {
+                formatChip("Block smashing", isRaw: false)
+                formatChip("Raw push-ups", isRaw: true)
+            }
+
+            Text(battleIsRaw
+                 ? "No blocks — just reps. Most reps wins, same rewards."
+                 : "Smash blocks with your reps and build your tower after.")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(Theme.mist.opacity(0.8))
+        }
+    }
+
+    private func formatChip(_ label: String, isRaw: Bool) -> some View {
+        let isSelected = battleIsRaw == isRaw
+        return Button {
+            battleIsRaw = isRaw
+            haptic.tap()
+        } label: {
+            Text(label)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundStyle(isSelected ? Color(hex: 0x3A2200) : Theme.mist)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.linearGradient(colors: [Theme.amberSoft, Theme.amberDeep], startPoint: .top, endPoint: .bottom))
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.white.opacity(0.06))
+                    }
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(.white.opacity(isSelected ? 0 : 0.14), lineWidth: 1)
+                }
+        }
+        .buttonStyle(PressScaleStyle())
+        .accessibilityLabel("\(label) battle format")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private func exerciseChip(_ option: Exercise) -> some View {
@@ -350,7 +408,7 @@ struct BattlesView: View {
                         .font(.system(size: 17, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.ivory)
                         .lineLimit(1)
-                    Text(battle.exercise.challengeTitle)
+                    Text(battle.isRaw ? "\(battle.exercise.challengeTitle) · Raw" : battle.exercise.challengeTitle)
                         .font(.system(size: 13, weight: .medium, design: .rounded))
                         .foregroundStyle(Theme.mist)
                         .lineLimit(1)
@@ -526,7 +584,7 @@ struct BattlesView: View {
         Task {
             defer { isCreating = false }
             do {
-                let battle = try await store.createInvitation(exercise: battleExercise)
+                let battle = try await store.createInvitation(exercise: battleExercise, isRaw: battleIsRaw)
                 share(battle)
             } catch {
                 errorMessage = (error as? LocalizedError)?.errorDescription

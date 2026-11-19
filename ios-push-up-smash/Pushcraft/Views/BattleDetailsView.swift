@@ -132,6 +132,12 @@ struct BattleDetailsView: View {
             Text("Both players perform \(battle.exercise.unitName). One run each, camera counted. Reach 30 reps to also earn XP and a streak day.")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.progressCyan)
+            Text(battle.isRaw
+                 ? "RAW PUSH-UPS · no blocks, most reps wins"
+                 : "BLOCK SMASHING · your reps smash blocks and build your tower")
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .tracking(1.6)
+                .foregroundStyle(Theme.amberSoft)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

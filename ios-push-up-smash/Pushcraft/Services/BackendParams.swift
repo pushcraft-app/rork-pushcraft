@@ -37,9 +37,11 @@ nonisolated struct CompleteSessionParams: Encodable, Sendable {
 
 nonisolated struct ExerciseParams: Encodable, Sendable {
     let exercise: String
+    var p_mode: String = "blocks"
 
     enum CodingKeys: String, CodingKey {
         case exercise = "p_exercise"
+        case p_mode
     }
 }
 

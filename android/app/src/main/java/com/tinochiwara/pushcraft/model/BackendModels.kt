@@ -129,6 +129,8 @@ data class BattleDTO(
     val id: String,
     val code: String,
     val exercise: String,
+    /** "blocks" (default) or "raw" (no block smashing, winner by reps). */
+    val mode: String = "blocks",
     val status: String,
     @SerialName("is_host") val isHost: Boolean,
     @SerialName("created_at") val createdAt: String,

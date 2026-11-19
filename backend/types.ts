@@ -75,6 +75,7 @@ export type Database = {
           id: string
           invite_expires_at: string
           joined_at: string | null
+          mode: string
           result: string | null
           rules_version: number
           status: string
@@ -90,6 +91,7 @@ export type Database = {
           id?: string
           invite_expires_at?: string
           joined_at?: string | null
+          mode?: string
           result?: string | null
           rules_version: number
           status?: string
@@ -105,6 +107,7 @@ export type Database = {
           id?: string
           invite_expires_at?: string
           joined_at?: string | null
+          mode?: string
           result?: string | null
           rules_version?: number
           status?: string
@@ -535,7 +538,10 @@ export type Database = {
         }
         Returns: Json
       }
-      create_battle: { Args: { p_exercise: string }; Returns: Json }
+      create_battle: {
+        Args: { p_exercise: string; p_mode?: string }
+        Returns: Json
+      }
       finalize_battle: { Args: { p_battle_id: string }; Returns: undefined }
       finalize_due_battles: { Args: never; Returns: number }
       get_my_battles: { Args: never; Returns: Json }

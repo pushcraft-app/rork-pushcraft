@@ -115,6 +115,8 @@ nonisolated struct BattleDTO: Decodable, Sendable {
     let id: UUID
     let code: String
     let exercise: String
+    /// "blocks" (default) or "raw" (no block smashing, winner by reps).
+    let mode: String?
     let status: String
     let isHost: Bool
     let createdAt: Date

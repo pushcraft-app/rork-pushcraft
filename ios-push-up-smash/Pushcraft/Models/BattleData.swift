@@ -43,6 +43,8 @@ struct Battle: Identifiable, Sendable {
     let isHost: Bool
     let createdDate: Date
     let exercise: Exercise
+    /// Raw battles play without the block; the higher rep count wins.
+    let isRaw: Bool
     let phase: BattlePhase
     let opponentName: String?
     let opponentAvatarPath: String?
@@ -82,6 +84,7 @@ struct Battle: Identifiable, Sendable {
         isHost = dto.isHost
         createdDate = dto.createdAt
         exercise = Exercise(serverValue: dto.exercise) ?? .pushUps
+        isRaw = dto.mode == "raw"
         switch dto.status {
         case "waiting": phase = .waiting
         case "active": phase = .active
