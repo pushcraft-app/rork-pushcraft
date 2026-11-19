@@ -281,6 +281,8 @@ private struct ForecastGraph: View {
 struct SaveProgressScreen: View {
     let model: OnboardingModel
 
+    @State private var showReviewer = false
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView(showsIndicators: false) {
@@ -302,9 +304,7 @@ struct SaveProgressScreen: View {
                     .frame(height: 190)
                     .padding(.top, 8)
 
-                    Text("Save your progress")
-                        .font(.system(size: 32, weight: .bold, design: .serif))
-                        .foregroundStyle(Theme.ivory)
+                    ReviewerTitle(text: "Save your progress") { showReviewer = true }
                         .multilineTextAlignment(.center)
 
                     Text(model.didIntroWorkout
@@ -321,6 +321,10 @@ struct SaveProgressScreen: View {
             .scrollBounceBehavior(.basedOnSize)
 
             VStack(spacing: 14) {
+                if showReviewer {
+                    ReviewerEmailAuth()
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
                 AuthButtons {
                     model.awaitingSignUp = true
                 }
@@ -328,6 +332,7 @@ struct SaveProgressScreen: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 12)
+            .animation(.easeOut(duration: 0.25), value: showReviewer)
         }
     }
 }

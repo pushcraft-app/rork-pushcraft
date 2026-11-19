@@ -270,6 +270,29 @@ final class AppState {
         }
     }
 
+    // MARK: - Email (hidden reviewer path)
+
+    /// Hidden reviewer path: standard email + password, no device linking.
+    func signInWithEmail(email: String, password: String) async {
+        pendingAuthMethod = "email"
+        isAuthenticating = true
+        defer { isAuthenticating = false }
+        do {
+            print("[Auth] Starting email sign in...")
+            _ = try await Backend.client.auth.signIn(
+                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                password: password
+            )
+            // The session observer flips the phase and starts the
+            // RevenueCat / bootstrap work once the session is live.
+        } catch {
+            pendingAuthMethod = nil
+            onboarding.awaitingSignUp = false
+            print("[Auth] Email sign in failed: \(error.localizedDescription)")
+            authError = "Couldn't sign in. Check the email and password and try again."
+        }
+    }
+
     // MARK: - Sign out & delete
 
     func signOut() async {

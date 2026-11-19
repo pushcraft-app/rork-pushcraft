@@ -134,10 +134,116 @@ struct AuthButtons: View {
     }
 }
 
+// MARK: - Hidden reviewer login
+
+private let reviewerTapLimit = 5
+private let reviewerTapWindow: TimeInterval = 2
+
+/// Screen title that reveals the reviewer email form after 5 quick taps.
+struct ReviewerTitle: View {
+    let text: String
+    var onReveal: () -> Void
+
+    @State private var tapCount = 0
+    @State private var windowStart = Date.distantPast
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 32, weight: .bold, design: .serif))
+            .foregroundStyle(Theme.ivory)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                let now = Date()
+                if now.timeIntervalSince(windowStart) > reviewerTapWindow {
+                    tapCount = 0
+                }
+                windowStart = now
+                tapCount += 1
+                if tapCount >= reviewerTapLimit {
+                    tapCount = 0
+                    HapticService.ui.warning()
+                    onReveal()
+                }
+            }
+    }
+}
+
+/// Hidden email + password sign-in for store reviewers (no device linking).
+struct ReviewerEmailAuth: View {
+    @Environment(AppState.self) private var appState
+
+    @State private var email = ""
+    @State private var password = ""
+
+    var body: some View {
+        VStack(spacing: 10) {
+            reviewerField("Email", text: $email) {
+                TextField("Email", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.emailAddress)
+            }
+            reviewerField("Password", text: $password) {
+                SecureField("Password", text: $password)
+                    .textContentType(.password)
+            }
+
+            Button {
+                submit()
+            } label: {
+                Group {
+                    if appState.isAuthenticating {
+                        ProgressView()
+                            .tint(Theme.obNavy)
+                    } else {
+                        Text("Sign in")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(Theme.obNavy)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 56)
+                .background(
+                    LinearGradient(colors: [Theme.amberSoft, Theme.amberDeep], startPoint: .top, endPoint: .bottom),
+                    in: .rect(cornerRadius: 18, style: .continuous)
+                )
+            }
+            .buttonStyle(PressScaleStyle())
+            .disabled(appState.isAuthenticating)
+        }
+        .opacity(appState.isAuthenticating ? 0.55 : 1)
+    }
+
+    private func reviewerField(_ placeholder: String, text: Binding<String>, @ViewBuilder field: () -> some View) -> some View {
+        field()
+            .font(.system(size: 16, weight: .semibold, design: .rounded))
+            .foregroundStyle(Theme.ivory)
+            .submitLabel(.done)
+            .onSubmit { submit() }
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .padding(.horizontal, 20)
+            .background(Theme.obCard, in: .rect(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Theme.obCardBorder, lineWidth: 1)
+            }
+    }
+
+    private func submit() {
+        guard email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+              password.isEmpty == false else { return }
+        Task { await appState.signInWithEmail(email: email, password: password) }
+    }
+}
+
 // MARK: - Existing account
 
 struct ExistingAccountScreen: View {
     let model: OnboardingModel
+
+    @State private var showReviewer = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -150,15 +256,19 @@ struct ExistingAccountScreen: View {
                 .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
                 .accessibilityHidden(true)
 
-            Text("Welcome back")
-                .font(.system(size: 32, weight: .bold, design: .serif))
-                .foregroundStyle(Theme.ivory)
+            ReviewerTitle(text: "Welcome back") { showReviewer = true }
                 .padding(.top, 18)
 
             Text("Sign in to keep building your towers.")
                 .font(.system(size: 16, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.mist)
                 .padding(.top, 6)
+
+            if showReviewer {
+                ReviewerEmailAuth()
+                    .padding(.top, 14)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
 
             Spacer()
 
@@ -168,6 +278,7 @@ struct ExistingAccountScreen: View {
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 12)
+        .animation(.easeOut(duration: 0.25), value: showReviewer)
         .onAppear { model.awaitingSignUp = false }
     }
 }
